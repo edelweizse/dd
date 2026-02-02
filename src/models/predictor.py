@@ -150,7 +150,7 @@ class ChemDiseasePredictor:
             
         Returns:
             Dict with keys: 'disease_id', 'chemical_id', 'disease_name', 'chemical_name',
-                          'probability', 'label', 'logit'
+                          'probability', 'label', 'logit', 'known'
         """
         # Validate IDs
         if disease_id not in self.disease_to_id:
@@ -176,8 +176,22 @@ class ChemDiseasePredictor:
             'chemical_name': self.chemical_names.get(chemical_id, 'Unknown'),
             'probability': prob,
             'label': int(prob >= self.threshold),
-            'logit': logit
+            'logit': logit,
+            'known': self.is_known_link(chem_idx, dis_idx)
         }
+    
+    def _get_known_links(self) -> set:
+        """Get set of known (chem_idx, dis_idx) pairs from the graph."""
+        if not hasattr(self, '_known_links_cache'):
+            cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
+            self._known_links_cache = set(
+                zip(cd_edge_index[0].cpu().tolist(), cd_edge_index[1].cpu().tolist())
+            )
+        return self._known_links_cache
+    
+    def is_known_link(self, chem_idx: int, dis_idx: int) -> bool:
+        """Check if a chemical-disease pair is a known association."""
+        return (chem_idx, dis_idx) in self._get_known_links()
     
     def predict_chemicals_for_disease(
         self,
@@ -194,7 +208,7 @@ class ChemDiseasePredictor:
             exclude_known: If True, exclude chemicals already known to be associated
             
         Returns:
-            DataFrame with columns: rank, chemical_id, chemical_name, probability, logit
+            DataFrame with columns: rank, chemical_id, chemical_name, probability, logit, known
         """
         if disease_id not in self.disease_to_id:
             raise ValueError(f"Unknown disease ID: {disease_id}")
@@ -209,13 +223,10 @@ class ChemDiseasePredictor:
             logits = self._compute_score(all_chem_ids, dis_ids)
             probs = torch.sigmoid(logits)
         
-        # Get known associations if excluding
-        known_chems = set()
-        if exclude_known:
-            cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
-            # Find chemicals associated with this disease
-            mask = cd_edge_index[1] == dis_idx
-            known_chems = set(cd_edge_index[0][mask].cpu().tolist())
+        # Get known associations
+        cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
+        mask = cd_edge_index[1] == dis_idx
+        known_chems = set(cd_edge_index[0][mask].cpu().tolist())
         
         # Sort by probability
         sorted_indices = torch.argsort(probs, descending=True).cpu().tolist()
@@ -223,7 +234,9 @@ class ChemDiseasePredictor:
         results = []
         rank = 1
         for idx in sorted_indices:
-            if exclude_known and idx in known_chems:
+            is_known = idx in known_chems
+            
+            if exclude_known and is_known:
                 continue
             
             chem_mesh_id = self.id_to_chemical[idx]
@@ -232,7 +245,8 @@ class ChemDiseasePredictor:
                 'chemical_id': chem_mesh_id,
                 'chemical_name': self.chemical_names.get(chem_mesh_id, 'Unknown'),
                 'probability': probs[idx].item(),
-                'logit': logits[idx].item()
+                'logit': logits[idx].item(),
+                'known': is_known
             })
             rank += 1
             
@@ -256,7 +270,7 @@ class ChemDiseasePredictor:
             exclude_known: If True, exclude diseases already known to be associated
             
         Returns:
-            DataFrame with columns: rank, disease_id, disease_name, probability, logit
+            DataFrame with columns: rank, disease_id, disease_name, probability, logit, known
         """
         if chemical_id not in self.chemical_to_id:
             raise ValueError(f"Unknown chemical ID: {chemical_id}")
@@ -271,13 +285,10 @@ class ChemDiseasePredictor:
             logits = self._compute_score(chem_ids, all_dis_ids)
             probs = torch.sigmoid(logits)
         
-        # Get known associations if excluding
-        known_diseases = set()
-        if exclude_known:
-            cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
-            # Find diseases associated with this chemical
-            mask = cd_edge_index[0] == chem_idx
-            known_diseases = set(cd_edge_index[1][mask].cpu().tolist())
+        # Get known associations
+        cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
+        mask = cd_edge_index[0] == chem_idx
+        known_diseases = set(cd_edge_index[1][mask].cpu().tolist())
         
         # Sort by probability
         sorted_indices = torch.argsort(probs, descending=True).cpu().tolist()
@@ -285,7 +296,9 @@ class ChemDiseasePredictor:
         results = []
         rank = 1
         for idx in sorted_indices:
-            if exclude_known and idx in known_diseases:
+            is_known = idx in known_diseases
+            
+            if exclude_known and is_known:
                 continue
             
             dis_mesh_id = self.id_to_disease[idx]
@@ -294,7 +307,8 @@ class ChemDiseasePredictor:
                 'disease_id': dis_mesh_id,
                 'disease_name': self.disease_names.get(dis_mesh_id, 'Unknown'),
                 'probability': probs[idx].item(),
-                'logit': logits[idx].item()
+                'logit': logits[idx].item(),
+                'known': is_known
             })
             rank += 1
             

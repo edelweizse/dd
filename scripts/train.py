@@ -12,11 +12,17 @@ the enriched 5-node-type graph (+ pathway, go_term).
 import argparse
 import torch
 import polars as pl
+from datetime import datetime
 
 from src.data.graph import build_graph_from_processed, load_vocabs, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders
 from src.models.hgt import HGTPredictor
 from src.training.trainer import train
+
+
+def generate_run_id() -> str:
+    """Generate a unique run ID based on timestamp."""
+    return datetime.now().strftime('%Y%m%d_%H%M%S')
 
 
 def main():
@@ -70,17 +76,30 @@ def main():
     parser.add_argument('--monitor', type=str, default='auprc',
                         help='Metric to monitor for model selection')
     
+    # Neighbor sampling arguments
+    parser.add_argument('--num-neighbours', type=int, nargs='+', default=[10, 5],
+                        help='Neighbor samples per layer (e.g., --num-neighbours 8 4)')
+    
     # Other arguments
     parser.add_argument('--ckpt-dir', type=str, default='./checkpoints/',
-                        help='Checkpoint directory')
-    parser.add_argument('--run-name', type=str, default='hgt_cd_lp',
-                        help='MLflow run name')
+                        help='Base checkpoint directory (run ID will be appended)')
+    parser.add_argument('--run-name', type=str, default=None,
+                        help='MLflow run name (auto-generated if not provided)')
     parser.add_argument('--experiment-name', type=str, default='HGT_linkpred',
                         help='MLflow experiment name')
     parser.add_argument('--no-amp', action='store_true',
                         help='Disable automatic mixed precision')
     
     args = parser.parse_args()
+    
+    # Generate unique run ID for this experiment
+    run_id = generate_run_id()
+    run_name = args.run_name if args.run_name else f'hgt_cd_{run_id}'
+    ckpt_dir = f'{args.ckpt_dir.rstrip("/")}/{run_id}/'
+    
+    print(f'Run ID: {run_id}')
+    print(f'Run name: {run_name}')
+    print(f'Checkpoint directory: {ckpt_dir}')
     
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -100,12 +119,14 @@ def main():
     
     # Prepare splits and loaders
     print('Preparing data splits and loaders...')
+    print(f'Neighbor sampling: {args.num_neighbours}')
     arts = prepare_splits_and_loaders(
         data_full = data,
         val_ratio = args.val_ratio,
         test_ratio = args.test_ratio,
         seed = args.seed,
-        batch_size = args.batch_size
+        batch_size = args.batch_size,
+        num_neighbours = args.num_neighbours
     )
     
     # Get vocabulary sizes for edge attributes
@@ -134,7 +155,7 @@ def main():
         arts = arts,
         model = model,
         device = device,
-        run_name = args.run_name,
+        run_name = run_name,
         experiment_name = args.experiment_name,
         epochs = args.epochs,
         lr = args.lr,
@@ -143,14 +164,14 @@ def main():
         num_neg_train = args.num_neg_train,
         num_neg_eval = args.num_neg_eval,
         amp = not args.no_amp,
-        ckpt_dir = args.ckpt_dir,
+        ckpt_dir = ckpt_dir,
         monitor = args.monitor,
         patience = args.patience,
         factor = args.factor,
         early_stopping_patience = args.early_stopping
     )
     
-    print('Training complete!')
+    print(f'Training complete! Checkpoints saved to: {ckpt_dir}')
 
 
 if __name__ == '__main__':

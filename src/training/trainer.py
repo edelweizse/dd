@@ -5,6 +5,7 @@ This module provides:
 - Checkpoint saving/loading utilities
 - Main training loop with MLflow logging
 - Early stopping and learning rate scheduling
+- Optuna-compatible training function for hyperparameter tuning
 """
 
 import os
@@ -13,11 +14,18 @@ import math
 import torch
 import torch.nn.functional as F
 import mlflow
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any
 
 from src.data.splits import SplitArtifacts, negative_sample_cd_batch_local
 from src.models.hgt import HGTPredictor
 from .utils import bce_with_logits, eval_epoch
+
+# Optional Optuna import for tuning
+try:
+    import optuna
+    OPTUNA_AVAILABLE = True
+except ImportError:
+    OPTUNA_AVAILABLE = False
 
 
 def save_checkpoint(
@@ -281,3 +289,215 @@ def train(
         print("TEST:\n", {k: round(float(v), 6) for k, v in test_metrics.items()})
     
     return model
+
+
+def train_for_tuning(
+    trial: 'optuna.Trial',
+    arts: SplitArtifacts,
+    model: HGTPredictor,
+    device: torch.device,
+    *,
+    run_name: str,
+    experiment_name: str = 'HGT_tuning',
+    epochs: int = 25,
+    lr: float = 3e-4,
+    weight_decay: float = 1e-4,
+    grad_clip: float = 1.0,
+    num_neg_train: int = 5,
+    num_neg_eval: int = 20,
+    ks: Tuple[int, ...] = (10,),
+    amp: bool = True,
+    monitor: str = 'auprc',
+    patience: int = 5,
+    factor: float = 0.5,
+    early_stopping_patience: int = 7,
+    hyperparams: Optional[Dict[str, Any]] = None
+) -> float:
+    """
+    Train the model with Optuna pruning support and MLflow logging.
+    
+    This function is designed for hyperparameter tuning:
+    - Reports validation metrics to Optuna for pruning decisions
+    - Uses shorter training runs with aggressive early stopping
+    - Logs all trials to MLflow for comparison
+    - Handles OOM errors gracefully
+    
+    Args:
+        trial: Optuna Trial object for pruning decisions.
+        arts: SplitArtifacts containing data loaders and split info.
+        model: HGTPredictor model to train.
+        device: Torch device.
+        run_name: MLflow run name (usually includes trial number).
+        experiment_name: MLflow experiment name.
+        epochs: Maximum number of epochs (shorter for tuning).
+        lr: Initial learning rate.
+        weight_decay: AdamW weight decay.
+        grad_clip: Gradient clipping value.
+        num_neg_train: Number of negatives per positive during training.
+        num_neg_eval: Number of negatives per positive during evaluation.
+        ks: Tuple of K values for Hits@K metrics.
+        amp: Whether to use automatic mixed precision.
+        monitor: Metric to monitor for model selection.
+        patience: LR scheduler patience.
+        factor: LR scheduler reduction factor.
+        early_stopping_patience: Epochs without improvement before stopping.
+        hyperparams: Optional dict of hyperparameters to log.
+        
+    Returns:
+        Best validation metric (AUPRC by default).
+        
+    Raises:
+        optuna.TrialPruned: If the trial is pruned by Optuna.
+    """
+    if not OPTUNA_AVAILABLE:
+        raise RuntimeError("Optuna is required for train_for_tuning. Install with: pip install optuna")
+    
+    model = model.to(device)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=lr,
+        weight_decay=weight_decay
+    )
+    
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='max', factor=factor, patience=patience
+    )
+    
+    scaler = torch.amp.GradScaler(enabled=(amp and device.type == 'cuda'))
+    
+    best_val = -math.inf
+    best_epoch = -1
+    epochs_without_improvement = 0
+    
+    mlflow.set_experiment(experiment_name)
+    
+    with mlflow.start_run(run_name=run_name):
+        # Log hyperparameters
+        params_to_log = {
+            'model': 'HGTPredictor',
+            'epochs': epochs,
+            'lr': lr,
+            'weight_decay': weight_decay,
+            'grad_clip': grad_clip,
+            'num_neg_train': num_neg_train,
+            'num_neg_eval': num_neg_eval,
+            'amp': amp,
+            'monitor': monitor,
+            'patience': patience,
+            'factor': factor,
+            'early_stopping_patience': early_stopping_patience,
+            'trial_number': trial.number,
+            'batch_size': getattr(arts.train_loader, 'batch_size', None)
+        }
+        
+        # Add sampled hyperparameters if provided
+        if hyperparams:
+            params_to_log.update(hyperparams)
+        
+        mlflow.log_params(params_to_log)
+        
+        for epoch in range(1, epochs + 1):
+            t0 = time.time()
+            model.train()
+            
+            loss_sum = 0.0
+            n_pos_sum = 0
+            
+            for batch in arts.train_loader:
+                batch = batch.to(device)
+                
+                cd_edge_store = batch[('chemical', 'associated_with', 'disease')]
+                pos_edge = cd_edge_store.edge_label_index
+                
+                neg_edge = negative_sample_cd_batch_local(
+                    batch_data=batch,
+                    pos_edge_index_local=pos_edge,
+                    known_pos=arts.known_pos,
+                    num_neg_per_pos=num_neg_train
+                )
+                
+                optimizer.zero_grad()
+                if amp and device.type == 'cuda':
+                    with torch.autocast(device_type='cuda', dtype=torch.float16):
+                        pos_logits, neg_logits = model(batch, pos_edge, neg_edge)
+                        loss = bce_with_logits(pos_logits, neg_logits)
+                    scaler.scale(loss).backward()
+                    if grad_clip is not None and grad_clip > 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    pos_logits, neg_logits = model(batch, pos_edge, neg_edge)
+                    loss = bce_with_logits(pos_logits, neg_logits)
+                    loss.backward()
+                    if grad_clip is not None and grad_clip > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                    optimizer.step()
+                
+                B = pos_edge.size(1)
+                loss_sum += float(loss.item()) * B
+                n_pos_sum += B
+            
+            train_loss = loss_sum / max(n_pos_sum, 1)
+            
+            # Validation
+            val_metrics = eval_epoch(
+                model,
+                arts.val_loader,
+                arts.known_pos,
+                device,
+                num_neg_eval,
+                ks,
+                amp
+            )
+            
+            scheduler.step(val_metrics[monitor])
+            curr_lr = optimizer.param_groups[0]['lr']
+            
+            epoch_time = time.time() - t0
+            
+            # Log to MLflow
+            log = {
+                'train_loss': train_loss,
+                'lr': curr_lr,
+                'epoch_time_sec': epoch_time
+            }
+            log.update({f'val_{k}': float(v) for k, v in val_metrics.items()})
+            mlflow.log_metrics(log, step=epoch)
+            
+            # Track best score
+            score = float(val_metrics[monitor])
+            if score > best_val:
+                best_val = score
+                best_epoch = epoch
+                epochs_without_improvement = 0
+            else:
+                epochs_without_improvement += 1
+            
+            # Report to Optuna for pruning
+            trial.report(score, epoch)
+            
+            # Check if trial should be pruned
+            if trial.should_prune():
+                mlflow.log_metric('pruned', 1)
+                mlflow.log_metric('pruned_at_epoch', epoch)
+                raise optuna.TrialPruned()
+            
+            # Early stopping
+            if epochs_without_improvement >= early_stopping_patience:
+                break
+            
+            print(
+                f'[Trial {trial.number}] EP {epoch:02d}  '
+                f'loss={train_loss:.4f}  val_{monitor}={score:.4f}  '
+                f'best={best_val:.4f}  lr={curr_lr:.2e}  time={epoch_time:.1f}s'
+            )
+        
+        # Log final metrics
+        mlflow.log_metric(f'best_val_{monitor}', best_val)
+        mlflow.log_metric('best_epoch', best_epoch)
+        mlflow.log_metric('total_epochs', epoch)
+        mlflow.log_metric('pruned', 0)
+    
+    return best_val

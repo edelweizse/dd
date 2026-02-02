@@ -5,3 +5,5 @@ mlflow.db
 /**/**/__pycache__/
 data/processed/*
 !data/processed/.gitkeep
+evaluation_results/
+embeddings/
