@@ -7,3 +7,4 @@ data/processed/*
 !data/processed/.gitkeep
 evaluation_results/
 embeddings/
+artifacts/

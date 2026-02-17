@@ -14,6 +14,8 @@ from torch_geometric.data import HeteroData
 from typing import Dict, List, Tuple, Any, Optional
 
 from .hgt import HGTPredictor
+from ..explainability.paths import AdjacencyIndex, build_adjacency
+from ..explainability.explain import ExplanationResult, explain_pair as _explain_pair, build_node_names
 
 
 class ChemDiseasePredictor:
@@ -100,10 +102,7 @@ class ChemDiseasePredictor:
                 edge_attr_dict[edge_type] = edge_store.edge_attr.to(self.device)
         
         # Move data to device - only move node types that exist in the model
-        x_dict = {}
-        for k, v in self.data.x_dict.items():
-            if k in self.model.node_emb:
-                x_dict[k] = v.to(self.device)
+        x_dict = {k: v.to(self.device) for k, v in self.data.x_dict.items()}
         
         edge_index_dict = {k: v.to(self.device) for k, v in self.data.edge_index_dict.items()}
         
@@ -386,3 +385,112 @@ class ChemDiseasePredictor:
             }
         
         return stats
+    
+    # ------------------------------------------------------------------
+    # Explainability
+    # ------------------------------------------------------------------
+
+    def _ensure_adjacency(self) -> AdjacencyIndex:
+        """Lazily build and cache the adjacency index for path enumeration."""
+        if not hasattr(self, '_adj_cache'):
+            self._adj_cache = build_adjacency(self.data)
+        return self._adj_cache
+
+    def _encode_with_attention(self):
+        """
+        Re-run model.encode() with return_attention=True.
+        
+        This is more expensive than using pre-computed embeddings because it
+        re-runs the full forward pass, but it gives us per-edge attention
+        weights for Tier-2 scoring.
+        
+        Returns:
+            Tuple of (embeddings_dict, attention_list) from model.encode().
+        """
+        edge_attr_dict = {}
+        for edge_type in self.data.edge_types:
+            edge_store = self.data[edge_type]
+            if hasattr(edge_store, 'edge_attr') and edge_store.edge_attr is not None:
+                edge_attr_dict[edge_type] = edge_store.edge_attr.to(self.device)
+
+        x_dict = {k: v.to(self.device) for k, v in self.data.x_dict.items()}
+        edge_index_dict = {k: v.to(self.device) for k, v in self.data.edge_index_dict.items()}
+
+        with torch.no_grad():
+            embeddings, attention = self.model.encode(
+                x_dict, edge_index_dict, edge_attr_dict,
+                return_attention=True,
+            )
+        return embeddings, attention
+
+    def explain_prediction(
+        self,
+        disease_id: str,
+        chemical_id: str,
+        *,
+        use_attention: bool = True,
+        node_names: Optional[Dict[str, Dict[int, str]]] = None,
+        data_dict: Optional[Dict[str, Any]] = None,
+        max_paths_per_template: int = 100,
+    ) -> ExplanationResult:
+        """
+        Explain a chemical-disease prediction with ranked graph paths.
+        
+        Combines Tier 1 (metapath enumeration) and optionally Tier 2
+        (attention weight extraction) to produce scored explanatory paths.
+        
+        Args:
+            disease_id: External disease ID (MESH/OMIM format).
+            chemical_id: External chemical ID (MESH format).
+            use_attention: If True, re-run encode() with attention extraction.
+                This is more expensive but gives better path scoring.
+            node_names: Optional name lookup dict for path descriptions.
+                If not provided but data_dict is given, names are built
+                automatically from the metadata DataFrames.
+            data_dict: Processed data dictionary (from load_processed_data).
+                Used to build node_names if not provided directly.
+            max_paths_per_template: Max paths per metapath template.
+                
+        Returns:
+            ExplanationResult with scored, ranked explanatory paths.
+        """
+        # Validate IDs
+        if disease_id not in self.disease_to_id:
+            raise ValueError(f"Unknown disease ID: {disease_id}")
+        if chemical_id not in self.chemical_to_id:
+            raise ValueError(f"Unknown chemical ID: {chemical_id}")
+
+        dis_idx = self.disease_to_id[disease_id]
+        chem_idx = self.chemical_to_id[chemical_id]
+
+        # Get prediction result
+        pred = self.predict_pair(disease_id, chemical_id)
+
+        # Build node names for readable descriptions
+        if node_names is None and data_dict is not None:
+            node_names = build_node_names(data_dict)
+
+        # Attention extraction (Tier 2)
+        attention_weights = None
+        embeddings = self.embeddings  # pre-computed (CPU-detached)
+        if use_attention:
+            embeddings, attention_weights = self._encode_with_attention()
+
+        return _explain_pair(
+            data=self.data,
+            chem_idx=chem_idx,
+            disease_idx=dis_idx,
+            chemical_id=chemical_id,
+            disease_id=disease_id,
+            chemical_name=pred['chemical_name'],
+            disease_name=pred['disease_name'],
+            probability=pred['probability'],
+            label=pred['label'],
+            logit=pred['logit'],
+            known=pred.get('known', False),
+            embeddings=embeddings,
+            attention_weights=attention_weights,
+            node_names=node_names,
+            adj=self._ensure_adjacency(),
+            max_paths_per_template=max_paths_per_template,
+        )

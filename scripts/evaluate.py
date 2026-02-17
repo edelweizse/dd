@@ -13,8 +13,8 @@ This script generates:
 - Publication-ready tables and figures
 
 Usage:
-    python scripts/evaluate.py --checkpoint checkpoints/best.pt
-    python scripts/evaluate.py --checkpoint checkpoints/best.pt --output-dir evaluation_results
+    python scripts/evaluate.py --checkpoint /checkpoints/best.pt
+    python scripts/evaluate.py --checkpoint /checkpoints/best.pt --output-dir evaluation_results
 """
 
 import argparse
@@ -39,11 +39,21 @@ from sklearn.metrics import (
 from sklearn.calibration import calibration_curve
 from sklearn.manifold import TSNE
 
+from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders, negative_sample_cd_batch_local
 from src.data.processing import load_processed_data
 from src.models.hgt import HGTPredictor
 from src.training.trainer import load_checkpoint
+
+
+def _batch_global_ids(batch, node_type: str) -> np.ndarray:
+    store = batch[node_type]
+    if hasattr(store, 'node_id') and store.node_id is not None:
+        return store.node_id.view(-1).cpu().numpy()
+    if hasattr(store, 'n_id') and store.n_id is not None:
+        return store.n_id.view(-1).cpu().numpy()
+    return store.x.view(-1).cpu().numpy()
 
 
 # ============================================================================
@@ -122,8 +132,8 @@ def collect_all_predictions(
         neg_scores = torch.sigmoid(neg_logits).cpu().numpy()
         
         # Map local IDs to global IDs
-        chem_gid = batch['chemical'].x.view(-1).cpu().numpy()
-        dis_gid = batch['disease'].x.view(-1).cpu().numpy()
+        chem_gid = _batch_global_ids(batch, 'chemical')
+        dis_gid = _batch_global_ids(batch, 'disease')
         
         pos_chem = chem_gid[pos_edge[0].cpu().numpy()]
         pos_dis = dis_gid[pos_edge[1].cpu().numpy()]
@@ -545,9 +555,18 @@ def plot_embedding_tsne(
     
     model.eval()
     
-    # Get embeddings
+    # Get embeddings (supports both embedding-table and feature-projection modes)
     with torch.no_grad():
-        embeddings = model.node_emb[node_type].weight.cpu().numpy()
+        if hasattr(model, 'node_emb') and node_type in model.node_emb:
+            embeddings = model.node_emb[node_type].weight.cpu().numpy()
+        elif hasattr(model, 'initial_node_states'):
+            x_dict = {k: v.to(next(model.parameters()).device) for k, v in data.x_dict.items()}
+            init_states = model.initial_node_states(x_dict)
+            if node_type not in init_states:
+                raise ValueError(f'Node type {node_type} is not available for embedding visualization.')
+            embeddings = init_states[node_type].cpu().numpy()
+        else:
+            raise ValueError(f'Model does not expose embeddings for node type: {node_type}')
     
     n_nodes = embeddings.shape[0]
     if n_nodes > n_samples:
@@ -821,6 +840,10 @@ def main():
                         help='Path to model checkpoint')
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
+    parser.add_argument('--use-node-features', action='store_true',
+                        help='Use precomputed node feature tables for inductive evaluation')
+    parser.add_argument('--node-features-dir', type=str, default=None,
+                        help='Directory with node feature parquet files')
     parser.add_argument('--output-dir', type=str, default='./evaluation_results',
                         help='Directory to save evaluation results')
     parser.add_argument('--num-neg-eval', type=int, default=50,
@@ -834,7 +857,7 @@ def main():
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
     
-    args = parser.parse_args()
+    args, _ = parse_args_with_config(parser)
     
     # Setup
     output_dir = Path(args.output_dir)
@@ -851,7 +874,9 @@ def main():
     data, vocabs = build_graph_from_processed(
         args.processed_dir, 
         add_reverse_edges=True,
-        include_extended=True
+        include_extended=True,
+        use_node_features=args.use_node_features,
+        node_features_dir=args.node_features_dir
     )
     print_graph_summary(data)
     
@@ -883,10 +908,18 @@ def main():
     print("="*60)
     
     num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}
+    node_input_dims = {
+        ntype: int(data[ntype].x.size(1))
+        for ntype in data.node_types
+        if isinstance(data[ntype].x, torch.Tensor)
+        and data[ntype].x.dim() == 2
+        and data[ntype].x.is_floating_point()
+    }
     
     model = HGTPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=arts.data_train.metadata(),
+        node_input_dims=node_input_dims,
         hidden_dim=128,  # Will be overwritten by checkpoint
         num_layers=2,
         num_heads=4,

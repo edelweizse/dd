@@ -20,7 +20,6 @@ from src.data.splits import SplitArtifacts, negative_sample_cd_batch_local
 from src.models.hgt import HGTPredictor
 from .utils import bce_with_logits, eval_epoch
 
-# Optional Optuna import for tuning
 try:
     import optuna
     OPTUNA_AVAILABLE = True
@@ -101,11 +100,16 @@ def train(
     num_neg_eval: int = 20,
     ks: Tuple[int, ...] = (5, 10, 50),
     amp: bool = True,
-    ckpt_dir: str = './checkpoints/',
+    ckpt_dir: str = '/checkpoints',
     monitor: str = 'auprc',
     patience: int = 5,
     factor: float = 0.5,
-    early_stopping_patience: int = 10
+    early_stopping_patience: int = 10,
+    pos_weight: Optional[float] = None,
+    focal_gamma: float = 0.0,
+    hard_negative_ratio: float = 0.5,
+    degree_alpha: float = 0.75,
+    eval_hard_negative_ratio: float = 0.0
 ) -> HGTPredictor:
     """
     Train the model with MLflow logging.
@@ -129,6 +133,13 @@ def train(
         patience: LR scheduler patience.
         factor: LR scheduler reduction factor.
         early_stopping_patience: Epochs without improvement before stopping.
+        pos_weight: Optional positive-class reweighting factor for BCE.
+            If None, defaults to num_neg_train.
+        focal_gamma: Focal loss gamma. Set > 0 to enable focal BCE.
+        hard_negative_ratio: Fraction of degree-biased negatives in training.
+        degree_alpha: Exponent for degree-biased negative sampling.
+        eval_hard_negative_ratio: Fraction of degree-biased negatives for
+            sampled evaluation.
         
     Returns:
         Trained model (loaded from best checkpoint).
@@ -137,6 +148,8 @@ def train(
     assert monitor in valid_metrics, f'Monitor must be one of {valid_metrics}, got {monitor}.'
     
     model = model.to(device)
+    effective_pos_weight = float(num_neg_train) if pos_weight is None else float(pos_weight)
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
@@ -168,6 +181,11 @@ def train(
             'monitor': monitor,
             'patience': patience,
             'factor': factor,
+            'pos_weight': effective_pos_weight,
+            'focal_gamma': focal_gamma,
+            'hard_negative_ratio': hard_negative_ratio,
+            'degree_alpha': degree_alpha,
+            'eval_hard_negative_ratio': eval_hard_negative_ratio,
             'neighbours': getattr(arts.train_loader, 'num_neighbors', None),
             'batch_size': getattr(arts.train_loader, 'batch_size', None)
         })
@@ -190,14 +208,21 @@ def train(
                     batch_data=batch,
                     pos_edge_index_local=pos_edge,
                     known_pos=arts.known_pos,
-                    num_neg_per_pos=num_neg_train
+                    num_neg_per_pos=num_neg_train,
+                    hard_negative_ratio=hard_negative_ratio,
+                    degree_alpha=degree_alpha
                 )
                 
                 optimizer.zero_grad()
                 if amp and device.type == 'cuda':
                     with torch.autocast(device_type='cuda', dtype=torch.float16):
                         pos_logits, neg_logits = model(batch, pos_edge, neg_edge)
-                        loss = bce_with_logits(pos_logits, neg_logits)
+                        loss = bce_with_logits(
+                            pos_logits,
+                            neg_logits,
+                            pos_weight=effective_pos_weight,
+                            focal_gamma=focal_gamma
+                        )
                     scaler.scale(loss).backward()
                     if grad_clip is not None and grad_clip > 0:
                         scaler.unscale_(optimizer)
@@ -206,7 +231,12 @@ def train(
                     scaler.update()
                 else:
                     pos_logits, neg_logits = model(batch, pos_edge, neg_edge)
-                    loss = bce_with_logits(pos_logits, neg_logits)
+                    loss = bce_with_logits(
+                        pos_logits,
+                        neg_logits,
+                        pos_weight=effective_pos_weight,
+                        focal_gamma=focal_gamma
+                    )
                     loss.backward()
                     if grad_clip is not None and grad_clip > 0:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -225,7 +255,9 @@ def train(
                 device,
                 num_neg_eval,
                 ks,
-                amp
+                amp,
+                hard_negative_ratio=eval_hard_negative_ratio,
+                degree_alpha=degree_alpha
             )
             
             scheduler.step(val_metrics[monitor])
@@ -281,7 +313,9 @@ def train(
             device,
             num_neg_eval,
             ks,
-            amp
+            amp,
+            hard_negative_ratio=eval_hard_negative_ratio,
+            degree_alpha=degree_alpha
         )
         mlflow.log_metrics({f'test_{k}': float(v) for k, v in test_metrics.items()})
         
@@ -311,7 +345,12 @@ def train_for_tuning(
     patience: int = 5,
     factor: float = 0.5,
     early_stopping_patience: int = 7,
-    hyperparams: Optional[Dict[str, Any]] = None
+    hyperparams: Optional[Dict[str, Any]] = None,
+    pos_weight: Optional[float] = None,
+    focal_gamma: float = 0.0,
+    hard_negative_ratio: float = 0.5,
+    degree_alpha: float = 0.75,
+    eval_hard_negative_ratio: float = 0.0
 ) -> float:
     """
     Train the model with Optuna pruning support and MLflow logging.
@@ -342,6 +381,13 @@ def train_for_tuning(
         factor: LR scheduler reduction factor.
         early_stopping_patience: Epochs without improvement before stopping.
         hyperparams: Optional dict of hyperparameters to log.
+        pos_weight: Optional positive-class reweighting factor for BCE.
+            If None, defaults to num_neg_train.
+        focal_gamma: Focal loss gamma. Set > 0 to enable focal BCE.
+        hard_negative_ratio: Fraction of degree-biased negatives in training.
+        degree_alpha: Exponent for degree-biased negative sampling.
+        eval_hard_negative_ratio: Fraction of degree-biased negatives for
+            sampled evaluation.
         
     Returns:
         Best validation metric (AUPRC by default).
@@ -353,6 +399,8 @@ def train_for_tuning(
         raise RuntimeError("Optuna is required for train_for_tuning. Install with: pip install optuna")
     
     model = model.to(device)
+    effective_pos_weight = float(num_neg_train) if pos_weight is None else float(pos_weight)
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=lr,
@@ -386,6 +434,11 @@ def train_for_tuning(
             'patience': patience,
             'factor': factor,
             'early_stopping_patience': early_stopping_patience,
+            'pos_weight': effective_pos_weight,
+            'focal_gamma': focal_gamma,
+            'hard_negative_ratio': hard_negative_ratio,
+            'degree_alpha': degree_alpha,
+            'eval_hard_negative_ratio': eval_hard_negative_ratio,
             'trial_number': trial.number,
             'batch_size': getattr(arts.train_loader, 'batch_size', None)
         }
@@ -413,14 +466,21 @@ def train_for_tuning(
                     batch_data=batch,
                     pos_edge_index_local=pos_edge,
                     known_pos=arts.known_pos,
-                    num_neg_per_pos=num_neg_train
+                    num_neg_per_pos=num_neg_train,
+                    hard_negative_ratio=hard_negative_ratio,
+                    degree_alpha=degree_alpha
                 )
                 
                 optimizer.zero_grad()
                 if amp and device.type == 'cuda':
                     with torch.autocast(device_type='cuda', dtype=torch.float16):
                         pos_logits, neg_logits = model(batch, pos_edge, neg_edge)
-                        loss = bce_with_logits(pos_logits, neg_logits)
+                        loss = bce_with_logits(
+                            pos_logits,
+                            neg_logits,
+                            pos_weight=effective_pos_weight,
+                            focal_gamma=focal_gamma
+                        )
                     scaler.scale(loss).backward()
                     if grad_clip is not None and grad_clip > 0:
                         scaler.unscale_(optimizer)
@@ -429,7 +489,12 @@ def train_for_tuning(
                     scaler.update()
                 else:
                     pos_logits, neg_logits = model(batch, pos_edge, neg_edge)
-                    loss = bce_with_logits(pos_logits, neg_logits)
+                    loss = bce_with_logits(
+                        pos_logits,
+                        neg_logits,
+                        pos_weight=effective_pos_weight,
+                        focal_gamma=focal_gamma
+                    )
                     loss.backward()
                     if grad_clip is not None and grad_clip > 0:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -449,7 +514,9 @@ def train_for_tuning(
                 device,
                 num_neg_eval,
                 ks,
-                amp
+                amp,
+                hard_negative_ratio=eval_hard_negative_ratio,
+                degree_alpha=degree_alpha
             )
             
             scheduler.step(val_metrics[monitor])

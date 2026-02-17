@@ -18,6 +18,8 @@ from typing import Dict, List, Tuple, Any, Optional
 from pathlib import Path
 
 from .hgt import HGTPredictor
+from ..explainability.paths import AdjacencyIndex, build_adjacency
+from ..explainability.explain import ExplanationResult, explain_pair as _explain_pair, build_node_names
 
 
 class EmbeddingCachePredictor:
@@ -113,10 +115,11 @@ class EmbeddingCachePredictor:
         batch_size: int = 10000
     ):
         """
-        Compute embeddings for all nodes and save to disk.
+        Compute embeddings and save prediction cache files.
         
         This needs to be run once on a machine with enough memory to hold the graph.
         After this, inference can be done with minimal memory.
+        Saved files are: `chemical_embeddings.npy`, `disease_embeddings.npy`, `W_cd.pt`.
         
         Args:
             model: Trained HGTPredictor model
@@ -140,10 +143,7 @@ class EmbeddingCachePredictor:
                 edge_attr_dict[edge_type] = edge_store.edge_attr.to(device)
         
         # Move data to device
-        x_dict = {}
-        for k, v in data.x_dict.items():
-            if k in model.node_emb:
-                x_dict[k] = v.to(device)
+        x_dict = {k: v.to(device) for k, v in data.x_dict.items()}
         
         edge_index_dict = {k: v.to(device) for k, v in data.edge_index_dict.items()}
         
@@ -151,9 +151,17 @@ class EmbeddingCachePredictor:
         with torch.no_grad():
             embeddings = model.encode(x_dict, edge_index_dict, edge_attr_dict)
         
-        # Save embeddings
+        # Save only tensors required by cached prediction
         print(f"Saving embeddings to {output_dir}...")
-        for node_type, emb in embeddings.items():
+        required_node_types = ('chemical', 'disease')
+        missing_node_types = [ntype for ntype in required_node_types if ntype not in embeddings]
+        if missing_node_types:
+            raise RuntimeError(
+                f"Missing required node embeddings for cache prediction: {missing_node_types}"
+            )
+
+        for node_type in required_node_types:
+            emb = embeddings[node_type]
             emb_np = emb.cpu().numpy()
             np.save(output_path / f'{node_type}_embeddings.npy', emb_np)
             print(f"  {node_type}: {emb_np.shape}")
@@ -379,6 +387,101 @@ class EmbeddingCachePredictor:
                 break
         
         return pl.DataFrame(results)
+
+    # ------------------------------------------------------------------
+    # Explainability
+    # ------------------------------------------------------------------
+
+    def explain_prediction(
+        self,
+        disease_id: str,
+        chemical_id: str,
+        *,
+        data: Optional[HeteroData] = None,
+        node_names: Optional[Dict[str, Dict[int, str]]] = None,
+        data_dict: Optional[Dict[str, Any]] = None,
+        adj: Optional[AdjacencyIndex] = None,
+        max_paths_per_template: int = 100,
+    ) -> ExplanationResult:
+        """
+        Explain a chemical-disease prediction with ranked graph paths.
+        
+        Since EmbeddingCachePredictor does not hold the graph or model,
+        the ``data`` (HeteroData) argument is **required** for
+        explainability.  Attention-based scoring (Tier 2) is not available
+        in cache mode; only Tier 1 (metapath enumeration + embedding
+        similarity) is used.
+        
+        Args:
+            disease_id: External disease ID (MESH/OMIM format).
+            chemical_id: External chemical ID (MESH format).
+            data: HeteroData graph (required for path enumeration).
+            node_names: Optional name lookup dict for path descriptions.
+            data_dict: Processed data dictionary for auto-building node_names.
+            adj: Pre-built adjacency index (reuse for speed).
+            max_paths_per_template: Max paths per metapath template.
+                
+        Returns:
+            ExplanationResult with scored, ranked explanatory paths.
+            
+        Raises:
+            ValueError: If ``data`` is not provided.
+        """
+        if data is None:
+            raise ValueError(
+                "EmbeddingCachePredictor.explain_prediction() requires the "
+                "'data' argument (HeteroData graph) for path enumeration. "
+                "Load the graph via build_graph_from_processed() and pass it in."
+            )
+
+        # Validate IDs
+        if disease_id not in self.disease_to_id:
+            raise ValueError(f"Unknown disease ID: {disease_id}")
+        if chemical_id not in self.chemical_to_id:
+            raise ValueError(f"Unknown chemical ID: {chemical_id}")
+
+        dis_idx = self.disease_to_id[disease_id]
+        chem_idx = self.chemical_to_id[chemical_id]
+
+        # Get prediction result
+        pred = self.predict_pair(disease_id, chemical_id)
+
+        # Build node names for readable descriptions
+        if node_names is None and data_dict is not None:
+            node_names = build_node_names(data_dict)
+
+        # Build adjacency if not provided
+        if adj is None:
+            adj = build_adjacency(data)
+
+        # Build embeddings dict from cached tensors for scoring
+        embeddings: Dict[str, 'torch.Tensor'] = {
+            'chemical': self.z_chem,
+            'disease': self.z_dis,
+        }
+        for ntype in ('gene', 'pathway', 'go_term'):
+            z = getattr(self, f'z_{ntype}', None)
+            if z is not None:
+                embeddings[ntype] = z
+
+        return _explain_pair(
+            data=data,
+            chem_idx=chem_idx,
+            disease_idx=dis_idx,
+            chemical_id=chemical_id,
+            disease_id=disease_id,
+            chemical_name=pred['chemical_name'],
+            disease_name=pred['disease_name'],
+            probability=pred['probability'],
+            label=pred['label'],
+            logit=pred['logit'],
+            known=pred.get('known', False),
+            embeddings=embeddings,
+            attention_weights=None,  # Not available in cache mode
+            node_names=node_names,
+            adj=adj,
+            max_paths_per_template=max_paths_per_template,
+        )
 
 
 class MiniBatchPredictor:

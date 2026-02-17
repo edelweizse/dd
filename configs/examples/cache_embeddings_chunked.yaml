@@ -1,0 +1,8 @@
+paths:
+  processed_dir: ./data/processed
+  checkpoint: /checkpoints/best.pt
+  output_dir: ./embeddings
+
+runtime:
+  chunk_size: 100000
+  cpu: false

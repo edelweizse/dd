@@ -1,0 +1,15 @@
+paths:
+  checkpoint: /checkpoints/best.pt
+  processed_dir: ./data/processed
+  output_dir: ./evaluation_results
+
+graph:
+  use_node_features: true
+  node_features_dir: ./data/processed/features
+
+evaluation:
+  num_neg_eval: 50
+  batch_size: 1024
+  split: test
+  no_tsne: false
+  seed: 42

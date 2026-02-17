@@ -11,7 +11,9 @@ from typing import Dict, Tuple
 
 def bce_with_logits(
     pos_logits: torch.Tensor,
-    neg_logits: torch.Tensor
+    neg_logits: torch.Tensor,
+    pos_weight: float | None = None,
+    focal_gamma: float = 0.0
 ) -> torch.Tensor:
     """
     Compute binary cross-entropy loss for link prediction.
@@ -19,13 +21,33 @@ def bce_with_logits(
     Args:
         pos_logits: Logits for positive samples.
         neg_logits: Logits for negative samples.
+        pos_weight: Optional positive-class reweighting factor.
+        focal_gamma: If > 0, applies focal modulation factor
+            (1 - p_t)^gamma on top of BCE.
         
     Returns:
         BCE loss value.
     """
     y = torch.cat([torch.ones_like(pos_logits), torch.zeros_like(neg_logits)], dim=0)
     logits = torch.cat([pos_logits, neg_logits], dim=0)
-    return F.binary_cross_entropy_with_logits(logits, y)
+
+    pos_weight_t = None
+    if pos_weight is not None:
+        pos_weight_t = torch.tensor([float(pos_weight)], device=logits.device, dtype=logits.dtype)
+
+    if focal_gamma <= 0.0:
+        return F.binary_cross_entropy_with_logits(logits, y, pos_weight=pos_weight_t)
+
+    bce = F.binary_cross_entropy_with_logits(
+        logits,
+        y,
+        pos_weight=pos_weight_t,
+        reduction='none'
+    )
+    probs = torch.sigmoid(logits)
+    pt = torch.where(y > 0.5, probs, 1.0 - probs)
+    focal = (1.0 - pt).pow(focal_gamma)
+    return (focal * bce).mean()
 
 
 @torch.no_grad()
@@ -93,7 +115,9 @@ def eval_epoch(
     device: torch.device,
     num_neg_per_pos: int = 20,
     ks: Tuple[int, ...] = (5, 10, 50),
-    amp: bool = True
+    amp: bool = True,
+    hard_negative_ratio: float = 0.0,
+    degree_alpha: float = 0.75
 ) -> Dict[str, float]:
     """
     Evaluate model on a data loader.
@@ -106,6 +130,8 @@ def eval_epoch(
         num_neg_per_pos: Number of negatives per positive for evaluation.
         ks: Tuple of K values for Hits@K.
         amp: Whether to use automatic mixed precision.
+        hard_negative_ratio: Fraction of degree-biased negatives.
+        degree_alpha: Exponent for degree-biased sampling.
         
     Returns:
         Dictionary with evaluation metrics.
@@ -130,7 +156,9 @@ def eval_epoch(
             batch_data=batch,
             pos_edge_index_local=pos_edge,
             known_pos=known_pos,
-            num_neg_per_pos=num_neg_per_pos
+            num_neg_per_pos=num_neg_per_pos,
+            hard_negative_ratio=hard_negative_ratio,
+            degree_alpha=degree_alpha
         )
         
         if amp and device.type == 'cuda':

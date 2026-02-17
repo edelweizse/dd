@@ -32,8 +32,9 @@ from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
+from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders
 from src.models.hgt import HGTPredictor
@@ -46,12 +47,12 @@ from src.training.trainer import train_for_tuning
 
 SEARCH_SPACE_FULL = {
     'hidden_dim': [128, 192, 256, 384],
-    'num_layers': (2, 4),  # Integer range
+    'num_layers': (2, 4),
     'num_heads': [4, 6, 8],
-    'dropout': (0.05, 0.25),  # Float range
+    'dropout': (0.05, 0.25),
     'batch_size': [1024, 2048, 3072],
-    'lr': (5e-5, 5e-4),  # Log scale
-    'weight_decay': (1e-5, 1e-3),  # Log scale
+    'lr': (5e-5, 5e-4),
+    'weight_decay': (1e-5, 1e-3),
     'num_neg_train': [5, 10, 15],
     'num_neighbours_options': [[5, 3], [8, 4], [10, 5]],
 }
@@ -72,13 +73,11 @@ SEARCH_SPACE_QUICK = {
 def sample_hyperparams(trial: optuna.Trial, search_space: Dict) -> Dict[str, Any]:
     """Sample hyperparameters from the search space."""
     
-    # Model architecture
     hidden_dim = trial.suggest_categorical('hidden_dim', search_space['hidden_dim'])
     num_layers = trial.suggest_int('num_layers', *search_space['num_layers'])
     num_heads = trial.suggest_categorical('num_heads', search_space['num_heads'])
     dropout = trial.suggest_float('dropout', *search_space['dropout'])
-    
-    # Training parameters
+
     batch_size = trial.suggest_categorical('batch_size', search_space['batch_size'])
     lr = trial.suggest_float('lr', *search_space['lr'], log=True)
     weight_decay = trial.suggest_float('weight_decay', *search_space['weight_decay'], log=True)
@@ -123,8 +122,7 @@ def create_objective(
     
     def objective(trial: optuna.Trial) -> float:
         """Single trial objective function."""
-        
-        # Sample hyperparameters
+
         params = sample_hyperparams(trial, search_space)
         
         run_name = f"trial_{trial.number:03d}_{datetime.now().strftime('%H%M%S')}"
@@ -135,7 +133,6 @@ def create_objective(
         print(f"Parameters: {json.dumps({k: v for k, v in params.items() if k != 'num_neighbours_idx'}, indent=2)}")
         
         try:
-            # Prepare data loaders with sampled batch_size and num_neighbours
             arts = prepare_splits_and_loaders(
                 data_full=data,
                 val_ratio=0.1,
@@ -145,12 +142,19 @@ def create_objective(
                 num_neighbours=params['num_neighbours']
             )
             
-            # Create model
             num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}
+            node_input_dims = {
+                ntype: int(data[ntype].x.size(1))
+                for ntype in data.node_types
+                if isinstance(data[ntype].x, torch.Tensor)
+                and data[ntype].x.dim() == 2
+                and data[ntype].x.is_floating_point()
+            }
             
             model = HGTPredictor(
                 num_nodes_dict=num_nodes_dict,
                 metadata=arts.data_train.metadata(),
+                node_input_dims=node_input_dims,
                 hidden_dim=params['hidden_dim'],
                 num_layers=params['num_layers'],
                 num_heads=params['num_heads'],
@@ -162,7 +166,6 @@ def create_objective(
             total_params = sum(p.numel() for p in model.parameters())
             print(f"Model parameters: {total_params:,}")
             
-            # Train with pruning support
             best_auprc = train_for_tuning(
                 trial=trial,
                 arts=arts,
@@ -191,14 +194,12 @@ def create_objective(
         except RuntimeError as e:
             if "out of memory" in str(e).lower() or "CUDA" in str(e):
                 print(f"Trial {trial.number} OOM - pruning")
-                # Clean up GPU memory
                 torch.cuda.empty_cache()
                 gc.collect()
                 raise optuna.TrialPruned()
             raise
         
         finally:
-            # Always try to clean up
             torch.cuda.empty_cache()
             gc.collect()
     
@@ -214,7 +215,6 @@ def print_study_summary(study: optuna.Study):
     
     print(f"\nTotal trials: {len(study.trials)}")
     
-    # Count trial states
     completed = len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE])
     pruned = len([t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED])
     failed = len([t for t in study.trials if t.state == optuna.trial.TrialState.FAIL])
@@ -230,13 +230,12 @@ def print_study_summary(study: optuna.Study):
         print(f"\nBest parameters:")
         for key, value in study.best_params.items():
             if key == 'num_neighbours_idx':
-                continue  # Skip index, show actual value
+                continue
             print(f"  {key}: {value}")
         
         # Show num_neighbours from the index
         if 'num_neighbours_idx' in study.best_params:
             idx = study.best_params['num_neighbours_idx']
-            # We need to reconstruct which search space was used
             options = SEARCH_SPACE_FULL['num_neighbours_options']
             if idx < len(options):
                 print(f"  num_neighbours: {options[idx]}")
@@ -251,7 +250,6 @@ def save_results(study: optuna.Study, output_dir: Path):
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Save best parameters
     if len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]) > 0:
         best_params = dict(study.best_params)
         
@@ -270,13 +268,11 @@ def save_results(study: optuna.Study, output_dir: Path):
             'completed_trials': len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]),
         }
         
-        # Save to JSON
         with open(output_dir / 'best_params.json', 'w') as f:
             json.dump(results, f, indent=2)
         
         print(f"\nResults saved to {output_dir / 'best_params.json'}")
         
-        # Generate training command
         cmd = generate_train_command(best_params)
         with open(output_dir / 'train_command.sh', 'w') as f:
             f.write("#!/bin/bash\n")
@@ -316,7 +312,6 @@ def generate_train_command(params: Dict) -> str:
         neighbours = params['num_neighbours']
         cmd_parts.append(f"    --num-neighbours {neighbours[0]} {neighbours[1]}")
     
-    # Add recommended defaults
     cmd_parts.append("    --epochs 100")
     cmd_parts.append("    --early-stopping 15")
     cmd_parts.append("    --patience 7")
@@ -346,6 +341,10 @@ def main():
     # Data settings
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
+    parser.add_argument('--use-node-features', action='store_true',
+                        help='Use precomputed node feature tables for inductive tuning')
+    parser.add_argument('--node-features-dir', type=str, default=None,
+                        help='Directory with node feature parquet files')
     
     # Training settings per trial
     parser.add_argument('--epochs-per-trial', type=int, default=25,
@@ -361,7 +360,7 @@ def main():
     parser.add_argument('--output-dir', type=str, default='./tuning_results',
                         help='Directory to save results')
     
-    args = parser.parse_args()
+    args, _ = parse_args_with_config(parser)
     
     # Select search space
     search_space = SEARCH_SPACE_QUICK if args.quick else SEARCH_SPACE_FULL
@@ -380,7 +379,6 @@ def main():
     print(f"Storage: {args.storage}")
     print(f"MLflow experiment: {args.experiment_name}")
     
-    # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
     
@@ -393,15 +391,17 @@ def main():
     data, vocabs = build_graph_from_processed(
         processed_data_dir=args.processed_dir,
         add_reverse_edges=True,
-        include_extended=True
+        include_extended=True,
+        use_node_features=args.use_node_features,
+        node_features_dir=args.node_features_dir
     )
     print_graph_summary(data)
     
     # Create Optuna study
     sampler = TPESampler(seed=42)
     pruner = MedianPruner(
-        n_startup_trials=5,  # Run 5 trials fully before pruning
-        n_warmup_steps=5,    # Don't prune before epoch 5
+        n_startup_trials=5,
+        n_warmup_steps=5,
         interval_steps=1
     )
     
@@ -419,7 +419,6 @@ def main():
         print(f"\nResuming study with {len(study.trials)} existing trials")
         print(f"Current best: {study.best_value:.4f}")
     
-    # Create objective function
     objective = create_objective(
         data=data,
         vocabs=vocabs,
@@ -429,8 +428,7 @@ def main():
         epochs_per_trial=args.epochs_per_trial,
         early_stopping_patience=args.early_stopping
     )
-    
-    # Run optimization
+
     print(f"\nStarting optimization...")
     print(f"{'='*60}\n")
     
@@ -445,7 +443,6 @@ def main():
     except KeyboardInterrupt:
         print("\n\nOptimization interrupted by user")
     
-    # Print and save results
     print_study_summary(study)
     save_results(study, Path(args.output_dir))
     

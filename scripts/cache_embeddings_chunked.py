@@ -4,10 +4,11 @@ Memory-efficient embedding computation using chunked/streaming processing.
 
 This script computes node embeddings WITHOUT loading the full graph into memory.
 It processes edges in chunks and accumulates messages incrementally.
+It saves only the prediction cache tensors used by `predict_cached.py`.
 
 Usage:
     python scripts/cache_embeddings_chunked.py \
-        --checkpoint ./checkpoints/best.pt \
+        --checkpoint /checkpoints/best.pt \
         --output-dir ./embeddings \
         --chunk-size 100000
 """
@@ -21,6 +22,8 @@ import polars as pl
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
+
+from src.cli_config import parse_args_with_config
 
 
 def load_node_counts(processed_dir: str) -> Dict[str, int]:
@@ -39,7 +42,6 @@ def load_node_counts(processed_dir: str) -> Dict[str, int]:
     for node_type, filename in node_files.items():
         filepath = processed_path / filename
         if filepath.exists():
-            # Just count rows without loading all data
             df = pl.scan_parquet(filepath).select(pl.len()).collect()
             counts[node_type] = df.item()
     
@@ -87,22 +89,25 @@ def extract_model_components(checkpoint_path: str, device: torch.device) -> Dict
     ckpt = torch.load(checkpoint_path, map_location='cpu')
     state = ckpt['model_state']
     
-    # Extract node embeddings
     node_embeddings = {}
     for key, value in state.items():
         if key.startswith('node_emb.') and key.endswith('.weight'):
             node_type = key.split('.')[1]
             node_embeddings[node_type] = value
+
+    if not node_embeddings:
+        raise RuntimeError(
+            'No node_emb weights found in checkpoint. This chunked cache script currently '
+            'supports embedding-table checkpoints only. For feature-based inductive models, '
+            'use scripts/cache_embeddings.py.'
+        )
     
-    # Extract W_cd decoder
     W_cd = state['W_cd']
     
-    # Extract layer weights
     num_layers = 0
     while f'convs.{num_layers}.lin_src.chemical__associated_with__disease.weight' in state:
         num_layers += 1
     
-    # Extract hidden dim
     hidden_dim = node_embeddings['chemical'].shape[1]
     
     print(f"  Found {len(node_embeddings)} node types: {list(node_embeddings.keys())}")
@@ -134,7 +139,6 @@ def chunked_message_passing(
     processed_path = Path(processed_dir)
     hidden_dim = h['chemical'].shape[1]
     
-    # Define edge types and their files
     edge_configs = [
         # (file, src_col, dst_col, src_type, dst_type, rel, attr_cols)
         ('chem_disease_edges.parquet', 'CHEM_ID', 'DS_ID', 'chemical', 'disease', 'associated_with', None),
@@ -143,7 +147,6 @@ def chunked_message_passing(
         ('ppi_edges.parquet', 'GENE_ID_1', 'GENE_ID_2', 'gene', 'gene', 'interacts_with', None),
     ]
     
-    # Add extended edges if they exist
     extended_edges = [
         ('gene_pathway_edges.parquet', 'GENE_ID', 'PATHWAY_ID', 'gene', 'pathway', 'participates_in', None),
         ('disease_pathway_edges.parquet', 'DS_ID', 'PATHWAY_ID', 'disease', 'pathway', 'disrupts', ['INFERENCE_GENE_COUNT']),
@@ -156,8 +159,7 @@ def chunked_message_passing(
     for cfg in extended_edges:
         if (processed_path / cfg[0]).exists():
             edge_configs.append(cfg)
-    
-    # Initialize output accumulators
+
     h_out = {ntype: torch.zeros_like(emb) for ntype, emb in h.items()}
     h_count = {ntype: torch.zeros(emb.shape[0], device=emb.device) for ntype, emb in h.items()}
     
@@ -337,10 +339,17 @@ def compute_embeddings_chunked(
         if device.type == 'cuda':
             torch.cuda.empty_cache()
     
-    # Save embeddings
-    print(f"\nSaving embeddings to {output_dir}...")
-    for ntype, emb in h.items():
-        emb_np = emb.cpu().numpy()
+    # Save only embeddings required for prediction cache
+    print(f"\nSaving prediction cache tensors to {output_dir}...")
+    required_node_types = ('chemical', 'disease')
+    missing_node_types = [ntype for ntype in required_node_types if ntype not in h]
+    if missing_node_types:
+        raise RuntimeError(
+            f'Missing required node embeddings for cache prediction: {missing_node_types}'
+        )
+
+    for ntype in required_node_types:
+        emb_np = h[ntype].cpu().numpy()
         np.save(output_path / f'{ntype}_embeddings.npy', emb_np)
         print(f"  {ntype}: {emb_np.shape}")
     
@@ -356,7 +365,7 @@ def main():
     
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/best.pt',
+    parser.add_argument('--checkpoint', type=str, default='/checkpoints/best.pt',
                         help='Path to model checkpoint')
     parser.add_argument('--output-dir', type=str, default='./embeddings',
                         help='Directory to save embeddings')
@@ -365,7 +374,7 @@ def main():
     parser.add_argument('--cpu', action='store_true',
                         help='Force CPU usage')
     
-    args = parser.parse_args()
+    args, _ = parse_args_with_config(parser)
     
     device = torch.device('cpu') if args.cpu else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')

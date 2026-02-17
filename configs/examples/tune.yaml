@@ -1,0 +1,19 @@
+optimization:
+  timeout: 14400
+  n_trials: null
+  quick: false
+
+study:
+  study_name: hgt_cd_tuning
+  storage: sqlite:///optuna_hgt.db
+  experiment_name: HGT_tuning
+  output_dir: ./tuning_results
+
+data:
+  processed_dir: ./data/processed
+  use_node_features: true
+  node_features_dir: ./data/processed/features
+
+training:
+  epochs_per_trial: 25
+  early_stopping: 7

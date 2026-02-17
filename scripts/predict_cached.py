@@ -3,7 +3,7 @@
 Memory-efficient inference using cached embeddings.
 
 This script uses pre-computed embeddings for inference, requiring minimal memory.
-Run scripts/cache_embeddings_lowmem.py first to generate the embedding cache.
+Run scripts/cache_embeddings_chunked.py first to generate the embedding cache.
 
 Usage:
     # Predict single pair
@@ -23,6 +23,7 @@ import argparse
 import torch
 from pathlib import Path
 
+from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
 from src.models.predictor_efficient import EmbeddingCachePredictor
 
@@ -30,13 +31,11 @@ from src.models.predictor_efficient import EmbeddingCachePredictor
 def main():
     parser = argparse.ArgumentParser(description='Memory-efficient CD link prediction')
     
-    # Data arguments
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
     parser.add_argument('--embeddings-dir', type=str, default='./embeddings',
                         help='Path to cached embeddings directory')
     
-    # Prediction arguments
     parser.add_argument('--disease', type=str, default=None,
                         help='Disease ID (e.g., MESH:D003920)')
     parser.add_argument('--chemical', type=str, default=None,
@@ -48,48 +47,41 @@ def main():
     parser.add_argument('--exclude-known', action='store_true',
                         help='Exclude known associations from top-k results')
     
-    args = parser.parse_args()
+    args, _ = parse_args_with_config(parser)
     
-    # Validate arguments
     if args.disease is None and args.chemical is None:
         parser.error('At least one of --disease or --chemical must be provided')
     
-    # Check if embeddings exist
     embeddings_path = Path(args.embeddings_dir)
     if not embeddings_path.exists():
         print(f'Error: Embeddings directory not found: {args.embeddings_dir}')
-        print('Run scripts/cache_embeddings_lowmem.py first to generate embeddings.')
+        print('Run scripts/cache_embeddings_chunked.py first to generate embeddings.')
         return
     
     required_files = ['chemical_embeddings.npy', 'disease_embeddings.npy', 'W_cd.pt']
     missing = [f for f in required_files if not (embeddings_path / f).exists()]
     if missing:
         print(f'Error: Missing embedding files: {missing}')
-        print('Run scripts/cache_embeddings_lowmem.py first to generate embeddings.')
+        print('Run scripts/cache_embeddings_chunked.py first to generate embeddings.')
         return
     
-    # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
     
-    # Load minimal data (just metadata, not the full graph)
     print('Loading metadata...')
     data_dict = load_processed_data(args.processed_dir)
     
-    # Load predictor from cache (with known links)
     print('Loading cached embeddings...')
     predictor = EmbeddingCachePredictor.from_cache(
         cache_dir=args.embeddings_dir,
         disease_df=data_dict['diseases'],
         chemical_df=data_dict['chemicals'],
-        chem_disease_df=data_dict['chem_disease'],  # For known links
+        chem_disease_df=data_dict['chem_disease'],
         device=device,
         threshold=args.threshold
     )
     
-    # Run predictions
     if args.disease and args.chemical:
-        # Single pair prediction
         print(f'\nPredicting association between:')
         print(f'  Disease: {args.disease}')
         print(f'  Chemical: {args.chemical}')
@@ -107,7 +99,6 @@ def main():
             print(f'Error: {e}')
     
     elif args.disease:
-        # Top chemicals for disease
         print(f'\nTop {args.top_k} chemicals for disease: {args.disease}')
         if args.exclude_known:
             print('(excluding known associations)')
@@ -123,7 +114,6 @@ def main():
             print(f'Error: {e}')
     
     else:
-        # Top diseases for chemical
         print(f'\nTop {args.top_k} diseases for chemical: {args.chemical}')
         if args.exclude_known:
             print('(excluding known associations)')

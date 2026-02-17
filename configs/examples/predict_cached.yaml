@@ -1,0 +1,10 @@
+paths:
+  processed_dir: ./data/processed
+  embeddings_dir: ./embeddings
+
+query:
+  disease: MESH:D014202
+  chemical: C006901
+  top_k: 10
+  threshold: 0.5
+  exclude_known: true

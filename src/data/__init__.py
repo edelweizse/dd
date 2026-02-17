@@ -14,6 +14,10 @@ from .graph import (
     build_graph_from_processed,
     load_vocabs
 )
+from .node_features import (
+    NodeFeatureConfig,
+    build_node_feature_tables
+)
 from .splits import (
     LinkSplit,
     SplitArtifacts,

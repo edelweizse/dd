@@ -1,0 +1,14 @@
+paths:
+  processed_dir: ./data/processed
+  checkpoint: /checkpoints/best.pt
+  output_dir: ./embeddings
+
+graph:
+  use_node_features: true
+  node_features_dir: ./data/processed/features
+
+model:
+  hidden_dim: 128
+  num_layers: 2
+  num_heads: 4
+  dropout: 0.2

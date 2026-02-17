@@ -7,6 +7,7 @@ Usage:
 
 import argparse
 from src.data.processing import process_and_save
+from src.cli_config import parse_args_with_config
 
 
 def main():
@@ -24,7 +25,7 @@ def main():
         help='Path to processed data directory'
     )
     
-    args = parser.parse_args()
+    args, _ = parse_args_with_config(parser)
     
     print(f'Processing data from {args.raw_dir} to {args.processed_dir}')
     process_and_save(args.raw_dir, args.processed_dir)

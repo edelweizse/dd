@@ -33,10 +33,7 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
     """
     data_path = Path(data_dir)
     
-    # =========================================================================
     # CORE INTERACTION DATA
-    # =========================================================================
-    
     ctd_chg = pl.scan_csv(
         data_path / 'CTD_chem_gene_ixns.tsv',
         separator='\t',
@@ -44,13 +41,15 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
             'ChemicalName': pl.String,
             'ChemicalID': pl.String,
             'GeneID': pl.Int64,
-            'InteractionActions': pl.String
+            'InteractionActions': pl.String,
+            'PubMedIDs': pl.String
         })
-    ).select(['ChemicalName', 'ChemicalID', 'GeneID', 'InteractionActions']).rename({
+    ).select(['ChemicalName', 'ChemicalID', 'GeneID', 'InteractionActions', 'PubMedIDs']).rename({
         'ChemicalName': 'CHEM_NAME',
         'ChemicalID': 'CHEM_MESH_ID',
         'GeneID': 'GENE_NCBI_ID',
-        'InteractionActions': 'INTERACTIONS'
+        'InteractionActions': 'INTERACTIONS',
+        'PubMedIDs': 'PUBMED_IDS'
     })
     
     ctd_chd = pl.scan_csv(
@@ -60,13 +59,17 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
             'ChemicalName': pl.String,
             'ChemicalID': pl.String,
             'DiseaseName': pl.String,
-            'DiseaseID': pl.String
+            'DiseaseID': pl.String,
+            'DirectEvidence': pl.String,
+            'PubMedIDs': pl.String
         })
-    ).select(['ChemicalName', 'ChemicalID', 'DiseaseName', 'DiseaseID']).rename({
+    ).select(['ChemicalName', 'ChemicalID', 'DiseaseName', 'DiseaseID', 'DirectEvidence', 'PubMedIDs']).rename({
         'ChemicalName': 'CHEM_NAME',
         'ChemicalID': 'CHEM_MESH_ID',
         'DiseaseName': 'DS_NAME',
-        'DiseaseID': 'DS_OMIM_MESH_ID'
+        'DiseaseID': 'DS_OMIM_MESH_ID',
+        'DirectEvidence': 'DIRECT_EVIDENCE',
+        'PubMedIDs': 'PUBMED_IDS'
     })
     
     ctd_dg = pl.scan_csv(
@@ -76,13 +79,17 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
             'GeneID': pl.Int64,
             'DiseaseName': pl.String,
             'DiseaseID': pl.String,
-            'OmimIDs': pl.String
+            'OmimIDs': pl.String,
+            'DirectEvidence': pl.String,
+            'PubMedIDs': pl.String
         })
-    ).select(['GeneID', 'DiseaseName', 'DiseaseID', 'OmimIDs']).rename({
+    ).select(['GeneID', 'DiseaseName', 'DiseaseID', 'OmimIDs', 'DirectEvidence', 'PubMedIDs']).rename({
         'GeneID': 'GENE_NCBI_ID',
         'DiseaseName': 'DS_NAME',
         'DiseaseID': 'DS_OMIM_MESH_ID',
-        'OmimIDs': 'DS_OMIM_IDS'
+        'OmimIDs': 'DS_OMIM_IDS',
+        'DirectEvidence': 'DIRECT_EVIDENCE',
+        'PubMedIDs': 'PUBMED_IDS'
     })
     
     ppi = pl.scan_csv(
@@ -91,10 +98,7 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
         new_columns=['GENE_NCBI_ID_1', 'GENE_NCBI_ID_2']
     )
     
-    # =========================================================================
     # ANNOTATION/VOCABULARY DATA
-    # =========================================================================
-    
     chem_annots = pl.scan_csv(
         data_path / 'CTD_chemicals.tsv',
         separator='\t',
@@ -152,10 +156,7 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
         'UniProtIDs': 'GENE_UNIPROT_IDS'
     })
     
-    # =========================================================================
-    # PATHWAY DATA
-    # =========================================================================
-    
+    # PATHWAY DATA    
     gene_pathways = pl.scan_csv(
         data_path / 'CTD_genes_pathways.tsv',
         separator='\t',
@@ -202,10 +203,7 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
         'PathwayID': 'PATHWAY_ID'
     })
     
-    # =========================================================================
     # GO TERM / PHENOTYPE DATA
-    # =========================================================================
-    
     chem_go = pl.scan_csv(
         data_path / 'CTD_chem_go_enriched.tsv',
         separator='\t',
@@ -321,10 +319,7 @@ def load_raw_data(data_dir: str = './data/raw') -> Dict[str, pl.LazyFrame]:
         'InferenceGeneSymbols': 'INFERENCE_GENE_SYMBOLS'
     }).with_columns(pl.lit('Cellular Component').alias('GO_ONTOLOGY'))
     
-    # =========================================================================
     # INTERACTION TYPE HIERARCHY
-    # =========================================================================
-    
     ixn_types = pl.scan_csv(
         data_path / 'CTD_chem_gene_ixn_types.tsv',
         separator='\t',
@@ -424,7 +419,6 @@ def build_core_entities(
         )
     ).select(pl.col('CHEM_MESH_ID', 'CHEM_NAME')).with_row_index('CHEM_ID').collect()
     
-    # Join annotations
     genes_core = genes_core.join(gene_annots.collect(), on='GENE_NCBI_ID', how='left')
     ds_core = ds_core.join(ds_annots.collect(), on='DS_OMIM_MESH_ID', how='left')
     chems_core = chems_core.join(chem_annots.collect(), on='CHEM_MESH_ID', how='left')
@@ -652,6 +646,10 @@ def build_edge_tables(
                 .sort_by(['has_list', 'n_pipes', 'n_chars'], descending=True)
                 .first()
                 .alias('INTERACTIONS'),
+            pl.col('PUBMED_IDS')
+                .sort_by(['has_list', 'n_pipes', 'n_chars'], descending=True)
+                .first()
+                .alias('PUBMED_IDS'),
             pl.first('CHEM_ID').alias('CHEM_ID'),
             pl.first('GENE_ID').alias('GENE_ID'),
         ])
@@ -670,7 +668,14 @@ def build_edge_tables(
                 .alias('parts')
         )
         .unnest('parts')
-        .select(['CHEM_ID', 'GENE_ID', 'ACTION_TYPE', 'ACTION_SUBJECT'])
+        .with_columns(
+            (
+                pl.col('PUBMED_IDS').cast(pl.Utf8).fill_null('').str.count_matches(r'\|') +
+                pl.when(pl.col('PUBMED_IDS').cast(pl.Utf8).fill_null('') != '').then(1).otherwise(0)
+            ).alias('PUBMED_COUNT')
+        )
+        .with_columns((pl.col('PUBMED_COUNT') + 1).log().alias('LOG_PUBMED_COUNT'))
+        .select(['CHEM_ID', 'GENE_ID', 'ACTION_TYPE', 'ACTION_SUBJECT', 'LOG_PUBMED_COUNT'])
         .unique()
         .with_row_index('CHEM_GENE_IDX')
     )
@@ -680,8 +685,26 @@ def build_edge_tables(
         ctd_dg.collect()
         .join(genes_core.select(['GENE_NCBI_ID', 'GENE_ID']), on='GENE_NCBI_ID')
         .join(ds_core.select(['DS_OMIM_MESH_ID', 'DS_ID']), on='DS_OMIM_MESH_ID')
-        .unique(['GENE_NCBI_ID', 'DS_OMIM_MESH_ID'])
-        .select(['GENE_ID', 'DS_ID'])
+        .with_columns([
+            pl.col('DIRECT_EVIDENCE').cast(pl.Utf8).fill_null('unspecified').alias('DIRECT_EVIDENCE'),
+            (
+                pl.col('PUBMED_IDS').cast(pl.Utf8).fill_null('').str.count_matches(r'\|') +
+                pl.when(pl.col('PUBMED_IDS').cast(pl.Utf8).fill_null('') != '').then(1).otherwise(0)
+            ).alias('PUBMED_COUNT')
+        ])
+        .group_by(['GENE_ID', 'DS_ID'])
+        .agg([
+            pl.first('DIRECT_EVIDENCE').alias('DIRECT_EVIDENCE'),
+            pl.max('PUBMED_COUNT').alias('PUBMED_COUNT')
+        ])
+        .with_columns([
+            pl.col('DIRECT_EVIDENCE').replace_strict({
+                'marker/mechanism': 0,
+                'therapeutic': 1,
+            }, default=2).alias('DIRECT_EVIDENCE_TYPE'),
+            (pl.col('PUBMED_COUNT') + 1).log().alias('LOG_PUBMED_COUNT')
+        ])
+        .select(['GENE_ID', 'DS_ID', 'DIRECT_EVIDENCE_TYPE', 'LOG_PUBMED_COUNT'])
         .with_row_index('GENE_DS_IDX')
     )
     
@@ -1052,9 +1075,7 @@ def process_and_save(
     print("Loading raw data...")
     raw_data = load_raw_data(raw_data_dir)
     
-    # =========================================================================
-    # BUILD CORE ENTITIES (original)
-    # =========================================================================
+    # BUILD CORE ENTITIES
     print("\nBuilding core entities (chemicals, diseases, genes)...")
     genes_core, ds_core, chems_core = build_core_entities(
         raw_data['ctd_chg'],
@@ -1070,9 +1091,7 @@ def process_and_save(
     print(f'  Diseases: {ds_core.shape[0]}')
     print(f'  Chemicals: {chems_core.shape[0]}')
     
-    # =========================================================================
-    # BUILD PATHWAY ENTITIES (new)
-    # =========================================================================
+    # BUILD PATHWAY ENTITIES
     print("\nBuilding pathway entities...")
     pathways_core = build_pathway_entities(
         raw_data['gene_pathways'],
@@ -1084,9 +1103,7 @@ def process_and_save(
     )
     print(f'  Pathways: {pathways_core.shape[0]}')
     
-    # =========================================================================
-    # BUILD GO TERM ENTITIES (new)
-    # =========================================================================
+    # BUILD GO TERM ENTITIES
     print("\nBuilding GO term entities...")
     go_terms_core = build_go_term_entities(
         raw_data['chem_go'],
@@ -1099,16 +1116,12 @@ def process_and_save(
     )
     print(f'  GO terms: {go_terms_core.shape[0]}')
     
-    # =========================================================================
-    # BUILD INTERACTION TYPE HIERARCHY (new)
-    # =========================================================================
+    # BUILD INTERACTION TYPE HIERARCHY
     print("\nBuilding interaction type hierarchy...")
     ixn_types = build_interaction_type_hierarchy(raw_data['ixn_types'])
     print(f'  Interaction types: {ixn_types.shape[0]}')
     
-    # =========================================================================
-    # BUILD ORIGINAL EDGE TABLES
-    # =========================================================================
+    # BUILD CORE EDGE TABLES
     print("\nBuilding original edge tables...")
     cg, dg, cd, ppi, ppi_directed = build_edge_tables(
         raw_data['ctd_chg'],
@@ -1125,9 +1138,7 @@ def process_and_save(
     print(f'  Chemical-Disease edges: {cd.shape[0]}')
     print(f'  PPI edges: {ppi.shape[0]}')
     
-    # =========================================================================
-    # BUILD PATHWAY EDGE TABLES (new)
-    # =========================================================================
+    # BUILD PATHWAY EDGE TABLES
     print("\nBuilding pathway edge tables...")
     gene_pathway_edges, disease_pathway_edges, chem_pathway_edges = build_pathway_edge_tables(
         raw_data['gene_pathways'],
@@ -1143,9 +1154,7 @@ def process_and_save(
     print(f'  Disease-Pathway edges: {disease_pathway_edges.shape[0]}')
     print(f'  Chemical-Pathway edges: {chem_pathway_edges.shape[0]}')
     
-    # =========================================================================
-    # BUILD GO TERM EDGE TABLES (new)
-    # =========================================================================
+    # BUILD GO TERM EDGE TABLES
     print("\nBuilding GO term edge tables...")
     chem_go_edges, chem_pheno_edges, go_disease_edges = build_go_term_edge_tables(
         raw_data['chem_go'],
@@ -1162,9 +1171,6 @@ def process_and_save(
     print(f'  Chemical-Phenotype edges: {chem_pheno_edges.shape[0]}')
     print(f'  GO-Disease edges: {go_disease_edges.shape[0]}')
     
-    # =========================================================================
-    # PRINT SUMMARY
-    # =========================================================================
     total_nodes = genes_core.shape[0] + ds_core.shape[0] + chems_core.shape[0] + \
                   pathways_core.shape[0] + go_terms_core.shape[0]
     total_edges = cg.shape[0] + dg.shape[0] + cd.shape[0] + ppi.shape[0] + \
@@ -1177,9 +1183,6 @@ def process_and_save(
     print(f'TOTAL EDGES: {total_edges:,}')
     print(f'{"="*60}')
     
-    # =========================================================================
-    # SAVE TO PARQUET
-    # =========================================================================
     print(f'\nSaving to {processed_data_dir}...')
     processed_path = Path(processed_data_dir)
     
@@ -1190,7 +1193,7 @@ def process_and_save(
     pathways_core.write_parquet(processed_path / 'pathways_nodes.parquet')
     go_terms_core.write_parquet(processed_path / 'go_terms_nodes.parquet')
     
-    # Edge tables (original)
+    # Core edge tables
     cg.write_parquet(processed_path / 'chem_gene_edges.parquet')
     dg.write_parquet(processed_path / 'disease_gene_edges.parquet')
     cd.write_parquet(processed_path / 'chem_disease_edges.parquet')
@@ -1219,7 +1222,7 @@ def process_and_save(
         'chemicals': chems_core,
         'pathways': pathways_core,
         'go_terms': go_terms_core,
-        # Original edges
+        # Core edges
         'chem_gene': cg,
         'disease_gene': dg,
         'chem_disease': cd,
@@ -1255,7 +1258,7 @@ def load_processed_data(processed_data_dir: str = './data/processed') -> Dict[st
         'genes': pl.read_parquet(processed_path / 'genes_nodes.parquet'),
         'diseases': pl.read_parquet(processed_path / 'diseases_nodes.parquet'),
         'chemicals': pl.read_parquet(processed_path / 'chemicals_nodes.parquet'),
-        # Original edges
+        # Core edges
         'chem_gene': pl.read_parquet(processed_path / 'chem_gene_edges.parquet'),
         'disease_gene': pl.read_parquet(processed_path / 'disease_gene_edges.parquet'),
         'chem_disease': pl.read_parquet(processed_path / 'chem_disease_edges.parquet'),

@@ -18,6 +18,7 @@ import torch
 import polars as pl
 from pathlib import Path
 
+from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
 from src.data.graph import build_hetero_data, build_graph_from_processed
 from src.models.hgt import HGTPredictor
@@ -31,7 +32,11 @@ def main():
     # Data arguments
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/best.pt',
+    parser.add_argument('--use-node-features', action='store_true',
+                        help='Use precomputed node feature tables for inductive inference')
+    parser.add_argument('--node-features-dir', type=str, default=None,
+                        help='Directory with node feature parquet files')
+    parser.add_argument('--checkpoint', type=str, default='/checkpoints/best.pt',
                         help='Path to model checkpoint')
     
     # Model arguments (should match training)
@@ -59,7 +64,7 @@ def main():
     parser.add_argument('--threshold', type=float, default=0.5,
                         help='Classification threshold')
     
-    args = parser.parse_args()
+    args, _ = parse_args_with_config(parser)
     
     # Validate arguments
     if args.disease is None and args.chemical is None:
@@ -81,17 +86,27 @@ def main():
         processed_data_dir=args.processed_dir,
         add_reverse_edges=True,
         save_vocabs=False,
-        include_extended=include_extended
+        include_extended=include_extended,
+        use_node_features=args.use_node_features,
+        node_features_dir=args.node_features_dir
     )
     
     # Create model with all node types
     print('Creating model...')
     num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}
+    node_input_dims = {
+        ntype: int(data[ntype].x.size(1))
+        for ntype in data.node_types
+        if isinstance(data[ntype].x, torch.Tensor)
+        and data[ntype].x.dim() == 2
+        and data[ntype].x.is_floating_point()
+    }
     print(f'Node types: {list(num_nodes_dict.keys())}')
     
     model = HGTPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=data.metadata(),
+        node_input_dims=node_input_dims,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         num_heads=args.num_heads,

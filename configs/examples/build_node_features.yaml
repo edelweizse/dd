@@ -1,0 +1,20 @@
+data:
+  processed_dir: ./data/processed
+  raw_dir: ./data/raw
+  output_dir: ./data/processed/features
+
+features:
+  text_dim: 128
+  chem_fp_bits: 1024
+  no_pubchem: false
+  no_uniprot: false
+  use_umls: true
+  umls_api_key: 754951fd-ffc7-4d1f-9d45-feca13611874
+  max_umls_fetch: 4000
+  disgenet_file: null
+
+runtime:
+  request_timeout_s: 20
+  sleep_s: 0.02
+  max_pubchem_fetch: null
+  max_uniprot_fetch: null

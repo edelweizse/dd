@@ -18,14 +18,17 @@ from src.models.hgt import HGTPredictor
 from src.models.predictor import ChemDiseasePredictor
 from src.models.predictor_efficient import EmbeddingCachePredictor
 from src.training.trainer import load_checkpoint
+from src.explainability.explain import build_node_names, ExplanationResult
 
 
 @st.cache_resource
 def load_model_and_data(
     processed_dir: str = './data/processed',
-    checkpoint_path: str = './checkpoints/best.pt',
+    checkpoint_path: str = '/checkpoints/best.pt',
     embeddings_dir: str = './embeddings',
     use_cache: bool = True,
+    use_node_features: bool = False,
+    node_features_dir: str = './data/processed/features',
     hidden_dim: int = 128,
     num_layers: int = 2,
     num_heads: int = 4,
@@ -62,15 +65,25 @@ def load_model_and_data(
         processed_data_dir=processed_dir,
         add_reverse_edges=True,
         save_vocabs=False,
-        include_extended=True
+        include_extended=True,
+        use_node_features=use_node_features,
+        node_features_dir=node_features_dir
     )
     
     # Create model with all node types from the graph
     num_nodes_dict = {node_type: data[node_type].num_nodes for node_type in data.node_types}
+    node_input_dims = {
+        ntype: int(data[ntype].x.size(1))
+        for ntype in data.node_types
+        if isinstance(data[ntype].x, torch.Tensor)
+        and data[ntype].x.dim() == 2
+        and data[ntype].x.is_floating_point()
+    }
     
     model = HGTPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=data.metadata(),
+        node_input_dims=node_input_dims,
         hidden_dim=hidden_dim,
         num_layers=num_layers,
         num_heads=num_heads,
@@ -93,6 +106,73 @@ def load_model_and_data(
     )
     
     return predictor, data_dict, False
+
+
+@st.cache_resource
+def load_graph_for_explain(
+    processed_dir: str = './data/processed',
+    use_node_features: bool = False,
+    node_features_dir: str = './data/processed/features',
+):
+    """Load the HeteroData graph for explainability (cached)."""
+    data, vocabs = build_graph_from_processed(
+        processed_data_dir=processed_dir,
+        add_reverse_edges=True,
+        save_vocabs=False,
+        include_extended=True,
+        use_node_features=use_node_features,
+        node_features_dir=node_features_dir,
+    )
+    return data
+
+
+def _render_explanation(explanation: ExplanationResult):
+    """Render an ExplanationResult in the Streamlit UI."""
+    if not explanation.paths:
+        st.info("No explanatory paths found between this chemical and disease.")
+        return
+
+    st.markdown(
+        f"**{len(explanation.paths)} paths found** | "
+        f"Attention scoring: {'Yes' if explanation.attention_available else 'No (Tier 1 only)'}"
+    )
+
+    # Metapath summary chips
+    if explanation.metapath_summary:
+        cols = st.columns(min(len(explanation.metapath_summary), 4))
+        for i, (mp_type, count) in enumerate(
+            sorted(explanation.metapath_summary.items(), key=lambda x: -x[1])
+        ):
+            cols[i % len(cols)].metric(mp_type, count)
+
+    # Top paths table
+    rows = []
+    for i, sp in enumerate(explanation.top_paths, 1):
+        rows.append({
+            "Rank": i,
+            "Evidence": sp.evidence_type,
+            "Score": f"{sp.combined_score:.4f}",
+            "Attention": f"{sp.attention_score:.4f}",
+            "Embedding": f"{sp.embedding_score:.4f}",
+            "Path": sp.description,
+        })
+
+    if rows:
+        import pandas as pd
+        df = pd.DataFrame(rows)
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Rank": st.column_config.NumberColumn("Rank", width="small"),
+                "Evidence": st.column_config.TextColumn("Evidence Type"),
+                "Score": st.column_config.TextColumn("Score"),
+                "Attention": st.column_config.TextColumn("Attn"),
+                "Embedding": st.column_config.TextColumn("Emb"),
+                "Path": st.column_config.TextColumn("Path", width="large"),
+            },
+        )
 
 
 def _resolve_id(selection: str, options: dict, manual_id: str, valid_ids: set) -> str:
@@ -191,12 +271,18 @@ def main():
     with st.sidebar:
         st.header("Configuration")
         processed_dir = st.text_input("Processed Data Directory", value="./data/processed")
-        checkpoint_path = st.text_input("Model Checkpoint", value="./checkpoints/best.pt")
+        checkpoint_path = st.text_input("Model Checkpoint", value="/checkpoints/best.pt")
         use_cached_embeddings = st.checkbox("Use Cached Embeddings", value=True)
+        use_node_features = st.checkbox("Use Node Features", value=False)
         embeddings_dir = st.text_input(
             "Embeddings Directory",
             value="./embeddings",
             disabled=not use_cached_embeddings
+        )
+        node_features_dir = st.text_input(
+            "Node Features Directory",
+            value="./data/processed/features",
+            disabled=not use_node_features
         )
         
         st.header("Model Parameters")
@@ -216,6 +302,8 @@ def main():
                 checkpoint_path=checkpoint_path,
                 embeddings_dir=embeddings_dir,
                 use_cache=use_cached_embeddings,
+                use_node_features=use_node_features,
+                node_features_dir=node_features_dir,
                 hidden_dim=hidden_dim,
                 num_layers=num_layers,
                 num_heads=num_heads,
@@ -446,31 +534,66 @@ def main():
                 try:
                     with st.spinner("Computing prediction..."):
                         result = predictor.predict_pair(disease_id, chemical_id)
-                    
-                    # Display results
-                    st.subheader("Prediction Result")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Probability", f"{result['probability']:.4f}")
-                    with col2:
-                        label_text = "Associated" if result['label'] == 1 else "Not Associated"
-                        st.metric("Prediction", label_text)
-                    with col3:
-                        known_text = "Yes" if result.get('known', False) else "No"
-                        st.metric("Known Association", known_text)
-                    
-                    # Detailed info
-                    with st.expander("Details"):
-                        st.write(f"**Disease:** {result['disease_name']} ({result['disease_id']})")
-                        st.write(f"**Chemical:** {result['chemical_name']} ({result['chemical_id']})")
-                        st.write(f"**Logit:** {result['logit']:.4f}")
-                        st.write(f"**Threshold:** {threshold}")
-                        st.write(f"**Known in CTD:** {'Yes' if result.get('known', False) else 'No'}")
-                        st.write(f"**Mode:** {'Cached embeddings' if using_cache else 'Full model'}")
-                        
+                    st.session_state.pair_result = result
+                    st.session_state.pair_explanation = None
                 except ValueError as e:
                     st.error(f"Error: {e}")
+
+        # Display persisted prediction result
+        if st.session_state.get("pair_result") is not None:
+            result = st.session_state.pair_result
+            # Clear stale results when inputs change
+            if result['disease_id'] != disease_id or result['chemical_id'] != chemical_id:
+                st.session_state.pair_result = None
+                st.session_state.pair_explanation = None
+            else:
+                st.subheader("Prediction Result")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Probability", f"{result['probability']:.4f}")
+                with col2:
+                    label_text = "Associated" if result['label'] == 1 else "Not Associated"
+                    st.metric("Prediction", label_text)
+                with col3:
+                    known_text = "Yes" if result.get('known', False) else "No"
+                    st.metric("Known Association", known_text)
+
+                with st.expander("Details"):
+                    st.write(f"**Disease:** {result['disease_name']} ({result['disease_id']})")
+                    st.write(f"**Chemical:** {result['chemical_name']} ({result['chemical_id']})")
+                    st.write(f"**Logit:** {result['logit']:.4f}")
+                    st.write(f"**Threshold:** {threshold}")
+                    st.write(f"**Known in CTD:** {'Yes' if result.get('known', False) else 'No'}")
+                    st.write(f"**Mode:** {'Cached embeddings' if using_cache else 'Full model'}")
+
+                # Explainability
+                if st.button("Explain prediction", key="explain_pair"):
+                    try:
+                        with st.spinner("Generating explanation (enumerating paths)..."):
+                            node_names = build_node_names(data_dict)
+                            if using_cache:
+                                graph = load_graph_for_explain(
+                                    processed_dir=processed_dir,
+                                    use_node_features=use_node_features,
+                                    node_features_dir=node_features_dir,
+                                )
+                                explanation = predictor.explain_prediction(
+                                    disease_id, chemical_id,
+                                    data=graph,
+                                    node_names=node_names,
+                                )
+                            else:
+                                explanation = predictor.explain_prediction(
+                                    disease_id, chemical_id,
+                                    node_names=node_names,
+                                )
+                        st.session_state.pair_explanation = explanation
+                    except Exception as ex:
+                        st.error(f"Explanation error: {ex}")
+
+                if st.session_state.get("pair_explanation") is not None:
+                    _render_explanation(st.session_state.pair_explanation)
     
     # Tab 2: Top Chemicals for Disease
     with tab2:
@@ -539,44 +662,93 @@ def main():
                         results_df = results_df.filter(pl.col('known') == True)
                     elif known_filter_chem == "Novel only":
                         results_df = results_df.filter(pl.col('known') == False)
-                    if results_df.height == 0:
-                        st.info("No results after applying the selected filters.")
-                    else:
-                        st.subheader(f"Top {top_k_chem} Chemicals for {disease_id_2}")
-                        st.caption(f"Disease: {disease_name_map.get(disease_id_2, 'Unknown')}")
-                        known_count = results_df.filter(pl.col('known') == True).height
-                        st.caption(f"Known: {known_count} | Novel: {results_df.height - known_count}")
-                    
-                        # Convert to pandas for display
-                        display_df = results_df.to_pandas()
-                        display_df['probability'] = display_df['probability'].apply(lambda x: f"{x:.4f}")
-                        display_df['logit'] = display_df['logit'].apply(lambda x: f"{x:.4f}")
-                        
-                        st.dataframe(
-                            display_df,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "rank": st.column_config.NumberColumn("Rank"),
-                                "chemical_id": st.column_config.TextColumn("Chemical ID"),
-                                "chemical_name": st.column_config.TextColumn("Chemical Name"),
-                                "probability": st.column_config.TextColumn("Probability"),
-                                "logit": st.column_config.TextColumn("Logit"),
-                                "known": st.column_config.CheckboxColumn("Known", help="Known association in CTD database")
-                            }
-                        )
-                        
-                        # Download button
-                        csv = results_df.write_csv()
-                        st.download_button(
-                            "Download Results (CSV)",
-                            csv,
-                            file_name=f"top_chemicals_{disease_id_2.replace(':', '_')}.csv",
-                            mime="text/csv"
-                        )
-                    
+                    st.session_state.tab2_results = results_df
+                    st.session_state.tab2_disease_id = disease_id_2
+                    st.session_state.tab2_explanations = {}
                 except ValueError as e:
                     st.error(f"Error: {e}")
+
+        # Display persisted Tab 2 results
+        if st.session_state.get("tab2_results") is not None:
+            # Clear stale results when disease input changes
+            if st.session_state.get("tab2_disease_id") != disease_id_2:
+                st.session_state.tab2_results = None
+                st.session_state.tab2_disease_id = None
+                st.session_state.tab2_explanations = {}
+            else:
+                results_df = st.session_state.tab2_results
+                if results_df.height == 0:
+                    st.info("No results after applying the selected filters.")
+                else:
+                    st.subheader(f"Top {top_k_chem} Chemicals for {disease_id_2}")
+                    st.caption(f"Disease: {disease_name_map.get(disease_id_2, 'Unknown')}")
+                    known_count = results_df.filter(pl.col('known') == True).height
+                    st.caption(f"Known: {known_count} | Novel: {results_df.height - known_count}")
+
+                    # Convert to pandas for display
+                    display_df = results_df.to_pandas()
+                    display_df['probability'] = display_df['probability'].apply(lambda x: f"{x:.4f}")
+                    display_df['logit'] = display_df['logit'].apply(lambda x: f"{x:.4f}")
+
+                    st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "rank": st.column_config.NumberColumn("Rank"),
+                            "chemical_id": st.column_config.TextColumn("Chemical ID"),
+                            "chemical_name": st.column_config.TextColumn("Chemical Name"),
+                            "probability": st.column_config.TextColumn("Probability"),
+                            "logit": st.column_config.TextColumn("Logit"),
+                            "known": st.column_config.CheckboxColumn("Known", help="Known association in CTD database")
+                        }
+                    )
+
+                    # Download button
+                    csv = results_df.write_csv()
+                    st.download_button(
+                        "Download Results (CSV)",
+                        csv,
+                        file_name=f"top_chemicals_{disease_id_2.replace(':', '_')}.csv",
+                        mime="text/csv"
+                    )
+
+                    # Per-result explainability
+                    st.subheader("Explain individual results")
+                    for row in results_df.iter_rows(named=True):
+                        chem_id_row = row['chemical_id']
+                        chem_name_row = row['chemical_name']
+                        explain_key = f"{disease_id_2}_{chem_id_row}"
+                        with st.expander(f"Explain: {chem_name_row} ({chem_id_row})"):
+                            if st.button(
+                                "Generate explanation",
+                                key=f"explain_tab2_{explain_key}",
+                            ):
+                                try:
+                                    with st.spinner("Generating explanation..."):
+                                        node_names = build_node_names(data_dict)
+                                        if using_cache:
+                                            graph = load_graph_for_explain(
+                                                processed_dir=processed_dir,
+                                                use_node_features=use_node_features,
+                                                node_features_dir=node_features_dir,
+                                            )
+                                            explanation = predictor.explain_prediction(
+                                                disease_id_2, chem_id_row,
+                                                data=graph,
+                                                node_names=node_names,
+                                            )
+                                        else:
+                                            explanation = predictor.explain_prediction(
+                                                disease_id_2, chem_id_row,
+                                                node_names=node_names,
+                                            )
+                                    st.session_state.tab2_explanations[explain_key] = explanation
+                                except Exception as ex:
+                                    st.error(f"Explanation error: {ex}")
+
+                            if explain_key in st.session_state.get("tab2_explanations", {}):
+                                _render_explanation(st.session_state.tab2_explanations[explain_key])
     
     # Tab 3: Top Diseases for Chemical
     with tab3:
@@ -645,44 +817,93 @@ def main():
                         results_df = results_df.filter(pl.col('known') == True)
                     elif known_filter_disease == "Novel only":
                         results_df = results_df.filter(pl.col('known') == False)
-                    if results_df.height == 0:
-                        st.info("No results after applying the selected filters.")
-                    else:
-                        st.subheader(f"Top {top_k_disease} Diseases for {chemical_id_2}")
-                        st.caption(f"Chemical: {chemical_name_map.get(chemical_id_2, 'Unknown')}")
-                        known_count = results_df.filter(pl.col('known') == True).height
-                        st.caption(f"Known: {known_count} | Novel: {results_df.height - known_count}")
-                    
-                        # Convert to pandas for display
-                        display_df = results_df.to_pandas()
-                        display_df['probability'] = display_df['probability'].apply(lambda x: f"{x:.4f}")
-                        display_df['logit'] = display_df['logit'].apply(lambda x: f"{x:.4f}")
-                        
-                        st.dataframe(
-                            display_df,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "rank": st.column_config.NumberColumn("Rank"),
-                                "disease_id": st.column_config.TextColumn("Disease ID"),
-                                "disease_name": st.column_config.TextColumn("Disease Name"),
-                                "probability": st.column_config.TextColumn("Probability"),
-                                "logit": st.column_config.TextColumn("Logit"),
-                                "known": st.column_config.CheckboxColumn("Known", help="Known association in CTD database")
-                            }
-                        )
-                        
-                        # Download button
-                        csv = results_df.write_csv()
-                        st.download_button(
-                            "Download Results (CSV)",
-                            csv,
-                            file_name=f"top_diseases_{chemical_id_2.replace(':', '_')}.csv",
-                            mime="text/csv"
-                        )
-                    
+                    st.session_state.tab3_results = results_df
+                    st.session_state.tab3_chemical_id = chemical_id_2
+                    st.session_state.tab3_explanations = {}
                 except ValueError as e:
                     st.error(f"Error: {e}")
+
+        # Display persisted Tab 3 results
+        if st.session_state.get("tab3_results") is not None:
+            # Clear stale results when chemical input changes
+            if st.session_state.get("tab3_chemical_id") != chemical_id_2:
+                st.session_state.tab3_results = None
+                st.session_state.tab3_chemical_id = None
+                st.session_state.tab3_explanations = {}
+            else:
+                results_df = st.session_state.tab3_results
+                if results_df.height == 0:
+                    st.info("No results after applying the selected filters.")
+                else:
+                    st.subheader(f"Top {top_k_disease} Diseases for {chemical_id_2}")
+                    st.caption(f"Chemical: {chemical_name_map.get(chemical_id_2, 'Unknown')}")
+                    known_count = results_df.filter(pl.col('known') == True).height
+                    st.caption(f"Known: {known_count} | Novel: {results_df.height - known_count}")
+
+                    # Convert to pandas for display
+                    display_df = results_df.to_pandas()
+                    display_df['probability'] = display_df['probability'].apply(lambda x: f"{x:.4f}")
+                    display_df['logit'] = display_df['logit'].apply(lambda x: f"{x:.4f}")
+
+                    st.dataframe(
+                        display_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "rank": st.column_config.NumberColumn("Rank"),
+                            "disease_id": st.column_config.TextColumn("Disease ID"),
+                            "disease_name": st.column_config.TextColumn("Disease Name"),
+                            "probability": st.column_config.TextColumn("Probability"),
+                            "logit": st.column_config.TextColumn("Logit"),
+                            "known": st.column_config.CheckboxColumn("Known", help="Known association in CTD database")
+                        }
+                    )
+
+                    # Download button
+                    csv = results_df.write_csv()
+                    st.download_button(
+                        "Download Results (CSV)",
+                        csv,
+                        file_name=f"top_diseases_{chemical_id_2.replace(':', '_')}.csv",
+                        mime="text/csv"
+                    )
+
+                    # Per-result explainability
+                    st.subheader("Explain individual results")
+                    for row in results_df.iter_rows(named=True):
+                        dis_id_row = row['disease_id']
+                        dis_name_row = row['disease_name']
+                        explain_key = f"{chemical_id_2}_{dis_id_row}"
+                        with st.expander(f"Explain: {dis_name_row} ({dis_id_row})"):
+                            if st.button(
+                                "Generate explanation",
+                                key=f"explain_tab3_{explain_key}",
+                            ):
+                                try:
+                                    with st.spinner("Generating explanation..."):
+                                        node_names = build_node_names(data_dict)
+                                        if using_cache:
+                                            graph = load_graph_for_explain(
+                                                processed_dir=processed_dir,
+                                                use_node_features=use_node_features,
+                                                node_features_dir=node_features_dir,
+                                            )
+                                            explanation = predictor.explain_prediction(
+                                                dis_id_row, chemical_id_2,
+                                                data=graph,
+                                                node_names=node_names,
+                                            )
+                                        else:
+                                            explanation = predictor.explain_prediction(
+                                                dis_id_row, chemical_id_2,
+                                                node_names=node_names,
+                                            )
+                                    st.session_state.tab3_explanations[explain_key] = explanation
+                                except Exception as ex:
+                                    st.error(f"Explanation error: {ex}")
+
+                            if explain_key in st.session_state.get("tab3_explanations", {}):
+                                _render_explanation(st.session_state.tab3_explanations[explain_key])
     
     # Footer
     st.markdown("---")

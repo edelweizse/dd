@@ -1,0 +1,44 @@
+data:
+  processed_dir: ./data/processed
+  use_node_features: true
+  node_features_dir: ./data/processed/features
+
+model:
+  hidden_dim: 128
+  num_layers: 2
+  num_heads: 4
+  dropout: 0.2
+
+training:
+  epochs: 100
+  batch_size: 2048
+  lr: 0.0003
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  num_neg_train: 5
+  num_neg_eval: 20
+  pos_weight: null
+  focal_gamma: 0.0
+  hard_negative_ratio: 0.5
+  eval_hard_negative_ratio: 0.0
+  degree_alpha: 0.75
+
+split:
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+
+scheduler:
+  patience: 5
+  factor: 0.5
+  early_stopping: 10
+  monitor: auprc
+
+sampling:
+  num_neighbours: [10, 5]
+
+logging:
+  ckpt_dir: /checkpoints
+  run_name: hgt_inductive
+  experiment_name: HGT_linkpred
+  no_amp: false
