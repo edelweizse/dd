@@ -100,7 +100,7 @@ def train(
     num_neg_eval: int = 20,
     ks: Tuple[int, ...] = (5, 10, 50),
     amp: bool = True,
-    ckpt_dir: str = '/checkpoints',
+    ckpt_dir: str = './checkpoints',
     monitor: str = 'auprc',
     patience: int = 5,
     factor: float = 0.5,

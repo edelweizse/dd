@@ -107,7 +107,7 @@ MODULE_SPECS: Tuple[ModuleSpec, ...] = (
             FieldSpec(
                 "checkpoint",
                 "Checkpoint (fallback)",
-                default="/checkpoints/best.pt",
+                default="./checkpoints/best.pt",
             ),
             FieldSpec("start_streamlit", "Start Streamlit", "bool", default=False),
             FieldSpec("streamlit_port", "Streamlit Port", "int", default=8501),
@@ -302,7 +302,7 @@ MODULE_SPECS: Tuple[ModuleSpec, ...] = (
                 "e.g. 10 5",
             ),
             FieldSpec(
-                "ckpt_dir", "Checkpoint Dir", "str", "--ckpt-dir", "/checkpoints"
+                "ckpt_dir", "Checkpoint Dir", "str", "--ckpt-dir", "./checkpoints"
             ),
             FieldSpec("run_name", "Run Name", "str", "--run-name", ""),
             FieldSpec(
@@ -327,7 +327,7 @@ MODULE_SPECS: Tuple[ModuleSpec, ...] = (
                 "Checkpoint",
                 "str",
                 "--checkpoint",
-                "/checkpoints/best.pt",
+                "./checkpoints/best.pt",
             ),
             FieldSpec(
                 "processed_dir",
@@ -392,7 +392,7 @@ MODULE_SPECS: Tuple[ModuleSpec, ...] = (
                 "Checkpoint",
                 "str",
                 "--checkpoint",
-                "/checkpoints/best.pt",
+                "./checkpoints/best.pt",
             ),
             FieldSpec(
                 "output_dir", "Output Dir", "str", "--output-dir", "./embeddings"
@@ -434,7 +434,7 @@ MODULE_SPECS: Tuple[ModuleSpec, ...] = (
                 "Checkpoint",
                 "str",
                 "--checkpoint",
-                "/checkpoints/best.pt",
+                "./checkpoints/best.pt",
             ),
             FieldSpec("hidden_dim", "Hidden Dim", "int", "--hidden-dim", 128),
             FieldSpec("num_layers", "Num Layers", "int", "--num-layers", 2),
@@ -519,7 +519,7 @@ MODULE_SPECS: Tuple[ModuleSpec, ...] = (
                 "Checkpoint",
                 "str",
                 "--checkpoint",
-                "/checkpoints/best.pt",
+                "./checkpoints/best.pt",
             ),
             FieldSpec(
                 "use_node_features",
@@ -1258,7 +1258,7 @@ class DDTUI(App[None]):
                 train_cmd.extend(["--use-node-features", "--node-features-dir", nf_dir])
             steps.append(("Train", _maybe_config(train_cmd)))
 
-        ckpt = str(v.get("checkpoint", "/checkpoints/best.pt")).strip() or "/checkpoints/best.pt"
+        ckpt = str(v.get("checkpoint", "./checkpoints/best.pt")).strip() or "./checkpoints/best.pt"
 
         # 4. evaluate (optional)
         if bool(v.get("run_evaluate", True)):

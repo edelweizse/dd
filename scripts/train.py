@@ -21,34 +21,57 @@ from src.models.hgt import HGTPredictor
 from src.training.trainer import train
 
 
+CHECKPOINT_ROOT = Path('./checkpoints')
+LEGACY_CHECKPOINT_ROOT = Path('/checkpoints')
+
+
 def generate_run_id() -> str:
     """Generate a unique run ID based on timestamp."""
-    return datetime.now().strftime('%Y%m%d_%H%M%S')
+    return datetime.now().strftime('%Y%m%d_%H%M%S_%f')
 
 
 def resolve_checkpoint_dir(ckpt_dir_arg: str, run_id: str) -> str:
     """
-    Resolve checkpoint directory under /checkpoints.
+    Resolve checkpoint directory under ./checkpoints.
 
     Rules:
-    - Base directory is always /checkpoints
-    - If user passes an absolute path outside /checkpoints, only its name is used
-    - If user passes a relative path, it becomes a subdirectory under /checkpoints
+    - Base directory is always ./checkpoints
+    - Legacy /checkpoints paths are mapped into ./checkpoints
+    - If user passes an absolute path outside checkpoint roots, only its name is used
+    - If user passes a relative path, it becomes a subdirectory under ./checkpoints
     - run_id is always appended as the final directory
     """
-    root = Path('/checkpoints')
+    root = CHECKPOINT_ROOT
+    root_abs = root.resolve()
+    legacy_root_abs = LEGACY_CHECKPOINT_ROOT.resolve()
+
     raw = (ckpt_dir_arg or '').strip()
     if not raw:
         return str(root / run_id)
 
-    requested = Path(raw)
+    requested = Path(raw).expanduser()
     if requested.is_absolute():
+        requested_abs = requested.resolve()
         try:
-            rel = requested.relative_to(root)
+            rel = requested_abs.relative_to(root_abs)
         except ValueError:
-            rel = Path(requested.name)
+            try:
+                rel = requested_abs.relative_to(legacy_root_abs)
+            except ValueError:
+                rel = Path(requested.name)
     else:
-        rel = requested
+        rel_parts = []
+        for part in requested.parts:
+            if part in {'', '.'}:
+                continue
+            if part == '..':
+                continue
+            rel_parts.append(part)
+
+        if rel_parts and rel_parts[0] == root.name:
+            rel_parts = rel_parts[1:]
+
+        rel = Path(*rel_parts) if rel_parts else Path('.')
 
     rel_str = str(rel).strip()
     if rel_str in {'', '.'}:
@@ -127,8 +150,8 @@ def main():
                         help='Neighbor samples per layer (e.g., --num-neighbours 8 4)')
     
     # Other arguments
-    parser.add_argument('--ckpt-dir', type=str, default='/checkpoints',
-                        help='Checkpoint subdirectory under /checkpoints (run ID appended)')
+    parser.add_argument('--ckpt-dir', type=str, default='./checkpoints',
+                        help='Checkpoint subdirectory under ./checkpoints (run ID appended)')
     parser.add_argument('--run-name', type=str, default=None,
                         help='MLflow run name (auto-generated if not provided)')
     parser.add_argument('--experiment-name', type=str, default='HGT_linkpred',

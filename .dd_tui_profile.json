@@ -1,5 +1,5 @@
 {
-  "active_module": "explain",
+  "active_module": "train",
   "values": {
     "pipeline": {
       "raw_dir": "./data/raw",
@@ -83,7 +83,7 @@
       "early_stopping": "10",
       "monitor": "auprc",
       "num_neighbours": "10 5",
-      "ckpt_dir": "/checkpoints",
+      "ckpt_dir": "./checkpoints",
       "run_name": "",
       "experiment_name": "HGT_linkpred",
       "no_amp": false,
@@ -126,7 +126,7 @@
       "processed_dir": "./data/processed",
       "use_node_features": false,
       "node_features_dir": "",
-      "checkpoint": "/checkpoints/best.pt",
+      "checkpoint": "./checkpoints/best.pt",
       "hidden_dim": "128",
       "num_layers": "2",
       "num_heads": "4",
@@ -152,10 +152,10 @@
       "__extra_args": ""
     },
     "explain": {
-      "disease": "",
-      "chemical": "",
+      "disease": "MESH:D014202",
+      "chemical": "D000431",
       "processed_dir": "./data/processed",
-      "cached": false,
+      "cached": true,
       "embeddings_dir": "./embeddings",
       "checkpoint": "/checkpoints/best.pt",
       "use_node_features": false,

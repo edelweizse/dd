@@ -1,7 +1,6 @@
 data:
   processed_dir: ./data/processed
-  use_node_features: true
-  node_features_dir: ./data/processed/features
+  use_node_features: False
 
 model:
   hidden_dim: 128
@@ -10,7 +9,7 @@ model:
   dropout: 0.2
 
 training:
-  epochs: 100
+  epochs: 50
   batch_size: 2048
   lr: 0.0003
   weight_decay: 0.0001
@@ -38,7 +37,7 @@ sampling:
   num_neighbours: [10, 5]
 
 logging:
-  ckpt_dir: /checkpoints
-  run_name: hgt_inductive
-  experiment_name: HGT_linkpred
+  ckpt_dir: ./checkpoints
+  run_name: test_run
+  experiment_name: HGTv2
   no_amp: false
