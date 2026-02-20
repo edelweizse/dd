@@ -86,10 +86,6 @@ def main():
     # Data arguments
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--use-node-features', action='store_true',
-                        help='Use precomputed node feature tables for inductive training')
-    parser.add_argument('--node-features-dir', type=str, default=None,
-                        help='Directory with *node_features.parquet files (default: <processed-dir>/features)')
     
     # Model arguments
     parser.add_argument('--hidden-dim', type=int, default=128,
@@ -134,6 +130,15 @@ def main():
                         help='Test set ratio')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
+    parser.add_argument('--split-strategy', type=str, default='stratified',
+                        choices=['stratified', 'random'],
+                        help='CD edge split strategy')
+    parser.add_argument('--stratify-bins', type=int, default=8,
+                        help='Number of log-degree bins for stratified split')
+    parser.add_argument('--no-enforce-train-node-coverage', action='store_true',
+                        help='Disable best-effort train node coverage rebalancing')
+    parser.add_argument('--save-split-artifact', type=str, default=None,
+                        help='Optional path to save train/val/test split artifact for reuse')
     
     # Scheduler arguments
     parser.add_argument('--patience', type=int, default=5,
@@ -179,9 +184,7 @@ def main():
         processed_data_dir=args.processed_dir,
         add_reverse_edges=True,
         save_vocabs=True,
-        include_extended=True,
-        use_node_features=args.use_node_features,
-        node_features_dir=args.node_features_dir
+        include_extended=True
     )
     
     print_graph_summary(data)
@@ -193,8 +196,12 @@ def main():
         val_ratio = args.val_ratio,
         test_ratio = args.test_ratio,
         seed = args.seed,
+        split_strategy = args.split_strategy,
+        stratify_bins = args.stratify_bins,
+        enforce_train_node_coverage = not args.no_enforce_train_node_coverage,
         batch_size = args.batch_size,
-        num_neighbours = args.num_neighbours
+        num_neighbours = args.num_neighbours,
+        split_artifact_save_path = args.save_split_artifact
     )
     
     num_action_types = vocabs['action_type'].height
@@ -210,8 +217,6 @@ def main():
         and data[ntype].x.dim() == 2
         and data[ntype].x.is_floating_point()
     }
-    if node_input_dims:
-        print(f'Using inductive node features for: {sorted(node_input_dims.keys())}')
     
     model = HGTPredictor(
         num_nodes_dict = num_nodes_dict,

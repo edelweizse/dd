@@ -64,8 +64,7 @@ dd/
 │   ├── cache_embeddings.py         # Cache embeddings (full graph)
 │   ├── cache_embeddings_lowmem.py  # Cache embeddings (legacy low-memory)
 │   ├── cache_embeddings_chunked.py # Main cache builder (streaming chunks)
-│   ├── predict_cached.py           # CLI inference (cached embeddings)
-│   └── tui.py                      # Interactive terminal control center
+│   └── predict_cached.py           # CLI inference (cached embeddings)
 │
 ├── data/
 │   ├── raw/                        # Raw CTD and PPI data files
@@ -222,9 +221,6 @@ graph TB
 | `gene` | Gene/protein entities | Embedding lookup by ID |
 | `pathway` | Biological pathways | Embedding lookup by ID |
 | `go_term` | GO terms/phenotypes | Embedding lookup by ID + ontology type |
-
-The project also supports **inductive node features** (chemical structure/text, disease text/hierarchy,
-gene sequence/text, pathway text, GO text/ontology) via precomputed feature tables.
 
 ### Edge Types with Attributes
 
@@ -481,20 +477,6 @@ The evaluation also computes:
 
 All main scripts support `--config <yaml-file>`. See `YAML_CONFIGS.md` and `configs/examples/`.
 
-### Terminal TUI (No YAML Needed)
-
-You can control modules and pipeline params from an interactive terminal UI:
-
-```bash
-pip install textual
-python scripts/tui.py
-```
-
-From the TUI you can:
-- Run each module with form-based params
-- Run an end-to-end pipeline in one flow
-- Start Streamlit directly (`Start Streamlit` button)
-
 ### 1. Process Raw Data
 
 ```bash
@@ -504,12 +486,6 @@ python -m scripts.process_data --raw-dir ./data/raw --processed-dir ./data/proce
 ### 2. Train Model
 
 ```bash
-# Optional: build inductive node features first
-PYTHONPATH=. python scripts/build_node_features.py \
-    --processed-dir ./data/processed \
-    --raw-dir ./data/raw \
-    --output-dir ./data/processed/features
-
 # Basic training
 python -m scripts.train \
     --processed-dir ./data/processed \
@@ -518,16 +494,6 @@ python -m scripts.train \
     --num-heads 4 \
     --epochs 200 \
     --batch-size 2048
-
-# Inductive training (feature-based node inputs)
-PYTHONPATH=. python scripts/train.py \
-    --processed-dir ./data/processed \
-    --use-node-features \
-    --node-features-dir ./data/processed/features \
-    --hidden-dim 128 \
-    --num-layers 2 \
-    --num-heads 4 \
-    --epochs 100
 
 # Full configuration
 python -m scripts.train \

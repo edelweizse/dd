@@ -1,0 +1,14 @@
+data:
+  processed_dir: ./data/processed
+
+split:
+  output_path: ./splits/cd_split_seed42.pt
+  val_ratio: 0.1
+  test_ratio: 0.1
+  seed: 42
+  split_strategy: stratified
+  stratify_bins: 8
+  no_enforce_train_node_coverage: false
+  include_extended: true
+  print_graph_summary: true
+  cd_rel: [chemical, associated_with, disease]

@@ -20,7 +20,7 @@ from pathlib import Path
 
 from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
-from src.data.graph import build_hetero_data, build_graph_from_processed
+from src.data.graph import build_graph_from_processed
 from src.models.hgt import HGTPredictor
 from src.models.predictor import ChemDiseasePredictor
 from src.training.trainer import load_checkpoint
@@ -32,10 +32,6 @@ def main():
     # Data arguments
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--use-node-features', action='store_true',
-                        help='Use precomputed node feature tables for inductive inference')
-    parser.add_argument('--node-features-dir', type=str, default=None,
-                        help='Directory with node feature parquet files')
     parser.add_argument('--checkpoint', type=str, default='/checkpoints/best.pt',
                         help='Path to model checkpoint')
     
@@ -86,9 +82,7 @@ def main():
         processed_data_dir=args.processed_dir,
         add_reverse_edges=True,
         save_vocabs=False,
-        include_extended=include_extended,
-        use_node_features=args.use_node_features,
-        node_features_dir=args.node_features_dir
+        include_extended=include_extended
     )
     
     # Create model with all node types

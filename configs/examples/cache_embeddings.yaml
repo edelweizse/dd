@@ -3,10 +3,6 @@ paths:
   checkpoint: /checkpoints/best.pt
   output_dir: ./embeddings
 
-graph:
-  use_node_features: true
-  node_features_dir: ./data/processed/features
-
 model:
   hidden_dim: 128
   num_layers: 2

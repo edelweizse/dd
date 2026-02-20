@@ -87,7 +87,12 @@ def collect_all_predictions(
     known_pos,
     device: torch.device,
     num_neg_per_pos: int = 50,
-    amp: bool = True
+    amp: bool = True,
+    sampling_seed: int | None = None,
+    hard_negative_ratio: float = 0.0,
+    degree_alpha: float = 0.75,
+    global_chem_degree: torch.Tensor | None = None,
+    global_dis_degree: torch.Tensor | None = None,
 ) -> Dict[str, np.ndarray]:
     """
     Collect all predictions from the model.
@@ -101,6 +106,15 @@ def collect_all_predictions(
         - neg_dis_ids: disease IDs for negative edges (global)
     """
     model.eval()
+
+    if sampling_seed is not None:
+        if device.type == 'cuda':
+            neg_generator = torch.Generator(device=device)
+        else:
+            neg_generator = torch.Generator()
+        neg_generator.manual_seed(int(sampling_seed))
+    else:
+        neg_generator = None
     
     all_pos_scores = []
     all_neg_scores = []
@@ -119,7 +133,12 @@ def collect_all_predictions(
             batch_data=batch,
             pos_edge_index_local=pos_edge,
             known_pos=known_pos,
-            num_neg_per_pos=num_neg_per_pos
+            num_neg_per_pos=num_neg_per_pos,
+            hard_negative_ratio=hard_negative_ratio,
+            degree_alpha=degree_alpha,
+            global_chem_degree=global_chem_degree,
+            global_dis_degree=global_dis_degree,
+            generator=neg_generator,
         )
         
         if amp and device.type == 'cuda':
@@ -840,10 +859,6 @@ def main():
                         help='Path to model checkpoint')
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--use-node-features', action='store_true',
-                        help='Use precomputed node feature tables for inductive evaluation')
-    parser.add_argument('--node-features-dir', type=str, default=None,
-                        help='Directory with node feature parquet files')
     parser.add_argument('--output-dir', type=str, default='./evaluation_results',
                         help='Directory to save evaluation results')
     parser.add_argument('--num-neg-eval', type=int, default=50,
@@ -856,6 +871,23 @@ def main():
                         help='Skip t-SNE visualization (faster)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
+    parser.add_argument('--val-ratio', type=float, default=0.1,
+                        help='Validation split ratio when not loading artifact')
+    parser.add_argument('--test-ratio', type=float, default=0.1,
+                        help='Test split ratio when not loading artifact')
+    parser.add_argument('--split-strategy', type=str, default='stratified',
+                        choices=['stratified', 'random'],
+                        help='CD edge split strategy when not loading artifact')
+    parser.add_argument('--stratify-bins', type=int, default=8,
+                        help='Number of log-degree bins for stratified split')
+    parser.add_argument('--no-enforce-train-node-coverage', action='store_true',
+                        help='Disable best-effort train node coverage rebalancing')
+    parser.add_argument('--eval-hard-negative-ratio', type=float, default=0.0,
+                        help='Fraction [0,1] of degree-biased negatives during eval')
+    parser.add_argument('--degree-alpha', type=float, default=0.75,
+                        help='Exponent for degree-biased negative sampling')
+    parser.add_argument('--split-artifact-path', type=str, default=None,
+                        help='Optional path to saved split artifact; reuses exact split if provided')
     
     args, _ = parse_args_with_config(parser)
     
@@ -874,9 +906,7 @@ def main():
     data, vocabs = build_graph_from_processed(
         args.processed_dir, 
         add_reverse_edges=True,
-        include_extended=True,
-        use_node_features=args.use_node_features,
-        node_features_dir=args.node_features_dir
+        include_extended=True
     )
     print_graph_summary(data)
     
@@ -894,13 +924,29 @@ def main():
     
     # Prepare splits
     print("\nPreparing data splits...")
+    if args.split_artifact_path:
+        print(f"Using split artifact: {args.split_artifact_path}")
+    else:
+        print("No split artifact provided; generating a fresh split (val=0.1, test=0.1).")
+
     arts = prepare_splits_and_loaders(
         data_full=data,
-        val_ratio=0.1,
-        test_ratio=0.1,
+        val_ratio=args.val_ratio,
+        test_ratio=args.test_ratio,
         seed=args.seed,
-        batch_size=args.batch_size
+        split_strategy=args.split_strategy,
+        stratify_bins=args.stratify_bins,
+        enforce_train_node_coverage=not args.no_enforce_train_node_coverage,
+        batch_size=args.batch_size,
+        split_artifact_load_path=args.split_artifact_path
     )
+    if args.split_artifact_path and arts.split_metadata:
+        print(
+            'Loaded split metadata: '
+            f"seed={arts.split_metadata.get('seed')}, "
+            f"val_ratio={arts.split_metadata.get('val_ratio')}, "
+            f"test_ratio={arts.split_metadata.get('test_ratio')}"
+        )
     
     # Load model
     print("\n" + "="*60)
@@ -920,10 +966,10 @@ def main():
         num_nodes_dict=num_nodes_dict,
         metadata=arts.data_train.metadata(),
         node_input_dims=node_input_dims,
-        hidden_dim=128,  # Will be overwritten by checkpoint
-        num_layers=2,
-        num_heads=4,
-        dropout=0.2,
+        hidden_dim=256,  # Will be overwritten by checkpoint
+        num_layers=3,
+        num_heads=8,
+        dropout=0.05411689885916049,
         num_action_types=vocabs['action_type'].height,
         num_action_subjects=vocabs['action_subject'].height
     )
@@ -940,7 +986,15 @@ def main():
     print(f"Checkpoint best metric: {ckpt.get('best_metrics', 'unknown')}")
     
     # Select loader
-    loader = arts.test_loader if args.split == 'test' else arts.val_loader
+    split_seed = int((arts.split_metadata or {}).get('seed', args.seed))
+    if args.split == 'test':
+        loader = arts.test_loader
+        known_pos = arts.known_pos_test
+        sampling_seed = split_seed + 303
+    else:
+        loader = arts.val_loader
+        known_pos = arts.known_pos_val
+        sampling_seed = split_seed + 202
     print(f"\nEvaluating on {args.split} set...")
     
     # Collect predictions
@@ -951,10 +1005,15 @@ def main():
     predictions = collect_all_predictions(
         model=model,
         loader=loader,
-        known_pos=arts.known_pos,
+        known_pos=known_pos,
         device=device,
         num_neg_per_pos=args.num_neg_eval,
-        amp=True
+        amp=True,
+        sampling_seed=sampling_seed,
+        hard_negative_ratio=args.eval_hard_negative_ratio,
+        degree_alpha=args.degree_alpha,
+        global_chem_degree=arts.chem_train_degree,
+        global_dis_degree=arts.dis_train_degree,
     )
     
     print(f"Positive samples: {len(predictions['pos_scores']):,}")

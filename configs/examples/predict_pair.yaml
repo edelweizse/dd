@@ -3,8 +3,6 @@ paths:
   checkpoint: /checkpoints/best.pt
 
 graph:
-  use_node_features: true
-  node_features_dir: ./data/processed/features
   no_extended: false
 
 model:

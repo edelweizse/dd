@@ -45,10 +45,6 @@ def main():
     # Data
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--use-node-features', action='store_true',
-                        help='Use precomputed node feature tables')
-    parser.add_argument('--node-features-dir', type=str, default=None,
-                        help='Directory with node feature parquet files')
 
     # Mode selection
     parser.add_argument('--cached', action='store_true',
@@ -114,8 +110,6 @@ def main():
             add_reverse_edges=True,
             save_vocabs=False,
             include_extended=include_extended,
-            use_node_features=args.use_node_features,
-            node_features_dir=args.node_features_dir,
         )
 
         print('Generating explanation (Tier 1 — metapath + embedding similarity)...')
@@ -133,8 +127,6 @@ def main():
             add_reverse_edges=True,
             save_vocabs=False,
             include_extended=include_extended,
-            use_node_features=args.use_node_features,
-            node_features_dir=args.node_features_dir,
         )
 
         num_nodes_dict = {ntype: data[ntype].num_nodes for ntype in data.node_types}

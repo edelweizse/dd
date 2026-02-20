@@ -1,6 +1,5 @@
 data:
   processed_dir: ./data/processed
-  use_node_features: False
 
 model:
   hidden_dim: 128
@@ -26,6 +25,10 @@ split:
   val_ratio: 0.1
   test_ratio: 0.1
   seed: 42
+  split_strategy: stratified
+  stratify_bins: 8
+  no_enforce_train_node_coverage: false
+  save_split_artifact: null
 
 scheduler:
   patience: 5

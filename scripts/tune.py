@@ -138,6 +138,8 @@ def create_objective(
                 val_ratio=0.1,
                 test_ratio=0.1,
                 seed=42,
+                split_strategy='stratified',
+                stratify_bins=8,
                 batch_size=params['batch_size'],
                 num_neighbours=params['num_neighbours']
             )
@@ -341,10 +343,6 @@ def main():
     # Data settings
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--use-node-features', action='store_true',
-                        help='Use precomputed node feature tables for inductive tuning')
-    parser.add_argument('--node-features-dir', type=str, default=None,
-                        help='Directory with node feature parquet files')
     
     # Training settings per trial
     parser.add_argument('--epochs-per-trial', type=int, default=25,
@@ -391,9 +389,7 @@ def main():
     data, vocabs = build_graph_from_processed(
         processed_data_dir=args.processed_dir,
         add_reverse_edges=True,
-        include_extended=True,
-        use_node_features=args.use_node_features,
-        node_features_dir=args.node_features_dir
+        include_extended=True
     )
     print_graph_summary(data)
     

@@ -117,7 +117,10 @@ def eval_epoch(
     ks: Tuple[int, ...] = (5, 10, 50),
     amp: bool = True,
     hard_negative_ratio: float = 0.0,
-    degree_alpha: float = 0.75
+    degree_alpha: float = 0.75,
+    sampling_seed: int | None = None,
+    global_chem_degree: torch.Tensor | None = None,
+    global_dis_degree: torch.Tensor | None = None,
 ) -> Dict[str, float]:
     """
     Evaluate model on a data loader.
@@ -132,6 +135,9 @@ def eval_epoch(
         amp: Whether to use automatic mixed precision.
         hard_negative_ratio: Fraction of degree-biased negatives.
         degree_alpha: Exponent for degree-biased sampling.
+        sampling_seed: Optional deterministic seed for negative sampling.
+        global_chem_degree: Optional train-split chemical degree vector.
+        global_dis_degree: Optional train-split disease degree vector.
         
     Returns:
         Dictionary with evaluation metrics.
@@ -139,6 +145,15 @@ def eval_epoch(
     from src.data.splits import negative_sample_cd_batch_local
     
     model.eval()
+    
+    if sampling_seed is not None:
+        if device.type == 'cuda':
+            neg_generator = torch.Generator(device=device)
+        else:
+            neg_generator = torch.Generator()
+        neg_generator.manual_seed(int(sampling_seed))
+    else:
+        neg_generator = None
     
     all_scores = []
     all_labels = []
@@ -158,7 +173,10 @@ def eval_epoch(
             known_pos=known_pos,
             num_neg_per_pos=num_neg_per_pos,
             hard_negative_ratio=hard_negative_ratio,
-            degree_alpha=degree_alpha
+            degree_alpha=degree_alpha,
+            global_chem_degree=global_chem_degree,
+            global_dis_degree=global_dis_degree,
+            generator=neg_generator,
         )
         
         if amp and device.type == 'cuda':

@@ -184,7 +184,7 @@ class EdgeAttrHeteroConv(nn.Module):
             
         Returns:
             If return_attention is False: Updated node features per type.
-            If return_attention is True: Tuple of (node_features, attention_dict)
+            If return_attention is True: Tuple of (updated_features, attention_dict)
                 where attention_dict maps edge_type -> [E] mean attention weights.
         """
         out_dict = {ntype: [] for ntype in x_dict.keys()}

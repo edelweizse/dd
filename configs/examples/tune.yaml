@@ -11,8 +11,6 @@ study:
 
 data:
   processed_dir: ./data/processed
-  use_node_features: true
-  node_features_dir: ./data/processed/features
 
 training:
   epochs_per_trial: 25

@@ -86,60 +86,6 @@ def _cat_ids_from_col(df: pl.DataFrame, col: str) -> Tuple[pl.DataFrame, pl.Data
     return df, vocab.select([f'{col}_ID', col])
 
 
-def _feature_tensor_from_table(
-    feature_table: Optional[pl.DataFrame],
-    id_col: str,
-    num_nodes: int,
-) -> Optional[torch.Tensor]:
-    """
-    Build a float node feature tensor from a feature table aligned by ID.
-
-    Expected format:
-      - one ID column (id_col)
-      - remaining columns are numeric features
-    """
-    if feature_table is None or feature_table.height == 0:
-        return None
-    if id_col not in feature_table.columns:
-        raise ValueError(f'Feature table missing required ID column {id_col}.')
-
-    ft = feature_table.sort(id_col)
-    ids = ft[id_col].to_numpy().astype(np.int64)
-    expected = np.arange(num_nodes, dtype=np.int64)
-    if ids.shape[0] != num_nodes or not np.array_equal(ids, expected):
-        raise ValueError(
-            f'Feature table for {id_col} must contain exactly IDs [0..{num_nodes - 1}] in any order.'
-        )
-
-    feat_cols = [c for c in ft.columns if c != id_col]
-    if not feat_cols:
-        return None
-
-    x = ft.select(feat_cols).to_numpy().astype(np.float32)
-    x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
-    return torch.from_numpy(x)
-
-
-def _load_node_feature_tables(features_dir: str) -> Dict[str, pl.DataFrame]:
-    """Load optional node feature tables from a directory."""
-    feature_path = Path(features_dir)
-    files = {
-        'chemical': ('chemical_node_features.parquet',),
-        'disease': ('disease_node_features.parquet',),
-        'gene': ('gene_node_features.parquet',),
-        'pathway': ('pathway_node_features.parquet',),
-        'go_term': ('go_term_node_features.parquet',),
-    }
-    out: Dict[str, pl.DataFrame] = {}
-    for node_type, candidates in files.items():
-        for name in candidates:
-            p = feature_path / name
-            if p.exists():
-                out[node_type] = pl.read_parquet(p)
-                break
-    return out
-
-
 def build_hetero_data(
     *,
     cnodes: pl.DataFrame,
@@ -157,7 +103,6 @@ def build_hetero_data(
     chem_go: Optional[pl.DataFrame] = None,
     chem_pheno: Optional[pl.DataFrame] = None,
     go_disease: Optional[pl.DataFrame] = None,
-    node_feature_tables: Optional[Dict[str, pl.DataFrame]] = None,
     add_reverse_edges: bool = True,
 ) -> Tuple[HeteroData, Dict[str, pl.DataFrame]]:
     """
@@ -179,7 +124,6 @@ def build_hetero_data(
         chem_go: Chemical-GO enriched edges DataFrame (optional).
         chem_pheno: Chemical-Phenotype edges DataFrame (optional).
         go_disease: GO-Disease edges DataFrame (optional).
-        node_feature_tables: Optional dict of node feature tables keyed by node type.
         add_reverse_edges: Whether to add reverse edges for message passing.
         
     Returns:
@@ -197,8 +141,6 @@ def build_hetero_data(
     }
     
     data = HeteroData()
-    node_feature_tables = node_feature_tables or {}
-    
     # CORE NODES (chemical, disease, gene)
     data['chemical'].num_nodes = num_chem
     data['disease'].num_nodes = num_ds
@@ -209,29 +151,22 @@ def build_hetero_data(
     data['disease'].node_id = torch.arange(num_ds).view(-1, 1)
     data['gene'].node_id = torch.arange(num_gene).view(-1, 1)
 
-    # Node inputs: precomputed biological features if present, else IDs.
-    chem_x = _feature_tensor_from_table(node_feature_tables.get('chemical'), 'CHEM_ID', num_chem)
-    dis_x = _feature_tensor_from_table(node_feature_tables.get('disease'), 'DS_ID', num_ds)
-    gene_x = _feature_tensor_from_table(node_feature_tables.get('gene'), 'GENE_ID', num_gene)
-
-    data['chemical'].x = chem_x if chem_x is not None else data['chemical'].node_id.clone()
-    data['disease'].x = dis_x if dis_x is not None else data['disease'].node_id.clone()
-    data['gene'].x = gene_x if gene_x is not None else data['gene'].node_id.clone()
+    data['chemical'].x = data['chemical'].node_id.clone()
+    data['disease'].x = data['disease'].node_id.clone()
+    data['gene'].x = data['gene'].node_id.clone()
 
     # NEW NODES (pathway, go_term)
     if pathway_nodes is not None and pathway_nodes.height > 0:
         num_pathway = _assert_correct_ids(pathway_nodes, 'PATHWAY_ID')
         data['pathway'].num_nodes = num_pathway
         data['pathway'].node_id = torch.arange(num_pathway).view(-1, 1)
-        pathway_x = _feature_tensor_from_table(node_feature_tables.get('pathway'), 'PATHWAY_ID', num_pathway)
-        data['pathway'].x = pathway_x if pathway_x is not None else data['pathway'].node_id.clone()
+        data['pathway'].x = data['pathway'].node_id.clone()
     
     if go_term_nodes is not None and go_term_nodes.height > 0:
         num_go_term = _assert_correct_ids(go_term_nodes, 'GO_TERM_ID')
         data['go_term'].num_nodes = num_go_term
         data['go_term'].node_id = torch.arange(num_go_term).view(-1, 1)
-        go_x = _feature_tensor_from_table(node_feature_tables.get('go_term'), 'GO_TERM_ID', num_go_term)
-        data['go_term'].x = go_x if go_x is not None else data['go_term'].node_id.clone()
+        data['go_term'].x = data['go_term'].node_id.clone()
         
         # Add ontology type as node feature if available
         if 'GO_ONTOLOGY' in go_term_nodes.columns:
@@ -411,8 +346,6 @@ def build_graph_from_processed(
     add_reverse_edges: bool = True,
     save_vocabs: bool = True,
     include_extended: bool = True,
-    use_node_features: bool = False,
-    node_features_dir: Optional[str] = None
 ) -> Tuple[HeteroData, Dict[str, pl.DataFrame]]:
     """
     Build HeteroData from processed parquet files.
@@ -422,9 +355,6 @@ def build_graph_from_processed(
         add_reverse_edges: Whether to add reverse edges.
         save_vocabs: Whether to save vocabulary files.
         include_extended: Whether to include pathway and GO term nodes/edges.
-        use_node_features: If True, load precomputed node feature tables.
-        node_features_dir: Directory containing node feature parquet files.
-            Defaults to {processed_data_dir}/features.
         
     Returns:
         Tuple of (HeteroData, vocabs).
@@ -433,11 +363,6 @@ def build_graph_from_processed(
     
     data_dict = load_processed_data(processed_data_dir)
 
-    node_feature_tables: Dict[str, pl.DataFrame] = {}
-    if use_node_features:
-        features_dir = node_features_dir or str(Path(processed_data_dir) / 'features')
-        node_feature_tables = _load_node_feature_tables(features_dir)
-    
     # Prepare optional arguments for extended graph
     extended_args = {}
     if include_extended:
@@ -469,7 +394,6 @@ def build_graph_from_processed(
         cg=data_dict['chem_gene'],
         dg=data_dict['disease_gene'],
         ppi=data_dict['ppi'],
-        node_feature_tables=node_feature_tables,
         add_reverse_edges=add_reverse_edges,
         **extended_args
     )

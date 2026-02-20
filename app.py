@@ -27,8 +27,6 @@ def load_model_and_data(
     checkpoint_path: str = '/checkpoints/best.pt',
     embeddings_dir: str = './embeddings',
     use_cache: bool = True,
-    use_node_features: bool = False,
-    node_features_dir: str = './data/processed/features',
     hidden_dim: int = 128,
     num_layers: int = 2,
     num_heads: int = 4,
@@ -65,9 +63,7 @@ def load_model_and_data(
         processed_data_dir=processed_dir,
         add_reverse_edges=True,
         save_vocabs=False,
-        include_extended=True,
-        use_node_features=use_node_features,
-        node_features_dir=node_features_dir
+        include_extended=True
     )
     
     # Create model with all node types from the graph
@@ -111,8 +107,6 @@ def load_model_and_data(
 @st.cache_resource
 def load_graph_for_explain(
     processed_dir: str = './data/processed',
-    use_node_features: bool = False,
-    node_features_dir: str = './data/processed/features',
 ):
     """Load the HeteroData graph for explainability (cached)."""
     data, vocabs = build_graph_from_processed(
@@ -120,8 +114,6 @@ def load_graph_for_explain(
         add_reverse_edges=True,
         save_vocabs=False,
         include_extended=True,
-        use_node_features=use_node_features,
-        node_features_dir=node_features_dir,
     )
     return data
 
@@ -273,16 +265,10 @@ def main():
         processed_dir = st.text_input("Processed Data Directory", value="./data/processed")
         checkpoint_path = st.text_input("Model Checkpoint", value="/checkpoints/best.pt")
         use_cached_embeddings = st.checkbox("Use Cached Embeddings", value=True)
-        use_node_features = st.checkbox("Use Node Features", value=False)
         embeddings_dir = st.text_input(
             "Embeddings Directory",
             value="./embeddings",
             disabled=not use_cached_embeddings
-        )
-        node_features_dir = st.text_input(
-            "Node Features Directory",
-            value="./data/processed/features",
-            disabled=not use_node_features
         )
         
         st.header("Model Parameters")
@@ -302,8 +288,6 @@ def main():
                 checkpoint_path=checkpoint_path,
                 embeddings_dir=embeddings_dir,
                 use_cache=use_cached_embeddings,
-                use_node_features=use_node_features,
-                node_features_dir=node_features_dir,
                 hidden_dim=hidden_dim,
                 num_layers=num_layers,
                 num_heads=num_heads,
@@ -575,8 +559,6 @@ def main():
                             if using_cache:
                                 graph = load_graph_for_explain(
                                     processed_dir=processed_dir,
-                                    use_node_features=use_node_features,
-                                    node_features_dir=node_features_dir,
                                 )
                                 explanation = predictor.explain_prediction(
                                     disease_id, chemical_id,
@@ -730,8 +712,6 @@ def main():
                                         if using_cache:
                                             graph = load_graph_for_explain(
                                                 processed_dir=processed_dir,
-                                                use_node_features=use_node_features,
-                                                node_features_dir=node_features_dir,
                                             )
                                             explanation = predictor.explain_prediction(
                                                 disease_id_2, chem_id_row,
@@ -885,8 +865,6 @@ def main():
                                         if using_cache:
                                             graph = load_graph_for_explain(
                                                 processed_dir=processed_dir,
-                                                use_node_features=use_node_features,
-                                                node_features_dir=node_features_dir,
                                             )
                                             explanation = predictor.explain_prediction(
                                                 dis_id_row, chemical_id_2,

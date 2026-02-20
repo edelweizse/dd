@@ -27,6 +27,16 @@ except ImportError:
     OPTUNA_AVAILABLE = False
 
 
+def _seeded_generator(seed: int, device: torch.device) -> torch.Generator:
+    """Create a device-compatible generator for deterministic sampling."""
+    if device.type == 'cuda':
+        g = torch.Generator(device=device)
+    else:
+        g = torch.Generator()
+    g.manual_seed(int(seed))
+    return g
+
+
 def save_checkpoint(
     path: str,
     model: HGTPredictor,
@@ -161,6 +171,10 @@ def train(
     )
     
     scaler = torch.amp.GradScaler(enabled=(amp and device.type == 'cuda'))
+    split_seed = int((arts.split_metadata or {}).get('seed', 42))
+    train_neg_generator = _seeded_generator(split_seed + 101, device)
+    val_sampling_seed = split_seed + 202
+    test_sampling_seed = split_seed + 303
     
     best_val = -math.inf
     best_epoch = -1
@@ -207,10 +221,13 @@ def train(
                 neg_edge = negative_sample_cd_batch_local(
                     batch_data=batch,
                     pos_edge_index_local=pos_edge,
-                    known_pos=arts.known_pos,
+                    known_pos=arts.known_pos_train,
                     num_neg_per_pos=num_neg_train,
                     hard_negative_ratio=hard_negative_ratio,
-                    degree_alpha=degree_alpha
+                    degree_alpha=degree_alpha,
+                    global_chem_degree=arts.chem_train_degree,
+                    global_dis_degree=arts.dis_train_degree,
+                    generator=train_neg_generator,
                 )
                 
                 optimizer.zero_grad()
@@ -251,13 +268,16 @@ def train(
             val_metrics = eval_epoch(
                 model,
                 arts.val_loader,
-                arts.known_pos,
+                arts.known_pos_val,
                 device,
                 num_neg_eval,
                 ks,
                 amp,
                 hard_negative_ratio=eval_hard_negative_ratio,
-                degree_alpha=degree_alpha
+                degree_alpha=degree_alpha,
+                sampling_seed=val_sampling_seed,
+                global_chem_degree=arts.chem_train_degree,
+                global_dis_degree=arts.dis_train_degree,
             )
             
             scheduler.step(val_metrics[monitor])
@@ -309,13 +329,16 @@ def train(
         test_metrics = eval_epoch(
             model,
             arts.test_loader,
-            arts.known_pos,
+            arts.known_pos_test,
             device,
             num_neg_eval,
             ks,
             amp,
             hard_negative_ratio=eval_hard_negative_ratio,
-            degree_alpha=degree_alpha
+            degree_alpha=degree_alpha,
+            sampling_seed=test_sampling_seed,
+            global_chem_degree=arts.chem_train_degree,
+            global_dis_degree=arts.dis_train_degree,
         )
         mlflow.log_metrics({f'test_{k}': float(v) for k, v in test_metrics.items()})
         
@@ -412,6 +435,9 @@ def train_for_tuning(
     )
     
     scaler = torch.amp.GradScaler(enabled=(amp and device.type == 'cuda'))
+    split_seed = int((arts.split_metadata or {}).get('seed', 42))
+    train_neg_generator = _seeded_generator(split_seed + 404, device)
+    val_sampling_seed = split_seed + 505
     
     best_val = -math.inf
     best_epoch = -1
@@ -465,10 +491,13 @@ def train_for_tuning(
                 neg_edge = negative_sample_cd_batch_local(
                     batch_data=batch,
                     pos_edge_index_local=pos_edge,
-                    known_pos=arts.known_pos,
+                    known_pos=arts.known_pos_train,
                     num_neg_per_pos=num_neg_train,
                     hard_negative_ratio=hard_negative_ratio,
-                    degree_alpha=degree_alpha
+                    degree_alpha=degree_alpha,
+                    global_chem_degree=arts.chem_train_degree,
+                    global_dis_degree=arts.dis_train_degree,
+                    generator=train_neg_generator,
                 )
                 
                 optimizer.zero_grad()
@@ -510,13 +539,16 @@ def train_for_tuning(
             val_metrics = eval_epoch(
                 model,
                 arts.val_loader,
-                arts.known_pos,
+                arts.known_pos_val,
                 device,
                 num_neg_eval,
                 ks,
                 amp,
                 hard_negative_ratio=eval_hard_negative_ratio,
-                degree_alpha=degree_alpha
+                degree_alpha=degree_alpha,
+                sampling_seed=val_sampling_seed,
+                global_chem_degree=arts.chem_train_degree,
+                global_dis_degree=arts.dis_train_degree,
             )
             
             scheduler.step(val_metrics[monitor])
