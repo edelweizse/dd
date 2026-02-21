@@ -25,7 +25,7 @@ from pathlib import Path
 
 from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
-from src.models.predictor_efficient import EmbeddingCachePredictor
+from src.models.inference.cached_embeddings import CachedEmbeddingPredictor
 
 
 def main():
@@ -72,7 +72,7 @@ def main():
     data_dict = load_processed_data(args.processed_dir)
     
     print('Loading cached embeddings...')
-    predictor = EmbeddingCachePredictor.from_cache(
+    predictor = CachedEmbeddingPredictor.from_cache(
         cache_dir=args.embeddings_dir,
         disease_df=data_dict['diseases'],
         chemical_df=data_dict['chemicals'],

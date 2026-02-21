@@ -24,9 +24,9 @@ from pathlib import Path
 from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
 from src.data.graph import build_graph_from_processed
-from src.models.hgt import HGTPredictor
-from src.models.predictor import ChemDiseasePredictor
-from src.models.predictor_efficient import EmbeddingCachePredictor
+from src.models.architectures.hgt import HGTPredictor
+from src.models.inference.full_graph import FullGraphPredictor
+from src.models.inference.cached_embeddings import CachedEmbeddingPredictor
 from src.explainability.explain import build_node_names
 from src.training.trainer import load_checkpoint
 
@@ -95,7 +95,7 @@ def main():
             return
 
         print('Loading cached embeddings...')
-        predictor = EmbeddingCachePredictor.from_cache(
+        predictor = CachedEmbeddingPredictor.from_cache(
             cache_dir=args.embeddings_dir,
             disease_df=data_dict['diseases'],
             chemical_df=data_dict['chemicals'],
@@ -153,7 +153,7 @@ def main():
         print(f'Loading checkpoint from {args.checkpoint}...')
         load_checkpoint(args.checkpoint, model, device=device)
 
-        predictor = ChemDiseasePredictor(
+        predictor = FullGraphPredictor(
             model=model,
             data=data,
             disease_df=data_dict['diseases'],

@@ -24,3 +24,17 @@ from .splits import (
     make_link_loaders,
     prepare_splits_and_loaders
 )
+from .feature_encoders import (
+    BaseFieldEncoder,
+    NumericFieldEncoder,
+    BooleanFieldEncoder,
+    CategoryOneHotEncoder,
+    MultiCategoryEncoder,
+    TextHashingEncoder,
+    ListHashingEncoder,
+    UrlStatsEncoder,
+    FieldPresenceEncoder,
+    FeatureEncoderPipeline,
+    build_default_metadata_encoder,
+    build_current_kg_node_encoder,
+)

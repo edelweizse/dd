@@ -14,94 +14,44 @@ from pathlib import Path
 
 from src.data.processing import load_processed_data
 from src.data.graph import build_graph_from_processed
-from src.models.hgt import HGTPredictor
-from src.models.predictor import ChemDiseasePredictor
-from src.models.predictor_efficient import EmbeddingCachePredictor
-from src.training.trainer import load_checkpoint
+from src.models.inference.cached_embeddings import CachedEmbeddingPredictor
 from src.explainability.explain import build_node_names, ExplanationResult
 
 
 @st.cache_resource
 def load_model_and_data(
     processed_dir: str = './data/processed',
-    checkpoint_path: str = '/checkpoints/best.pt',
     embeddings_dir: str = './embeddings',
-    use_cache: bool = True,
-    hidden_dim: int = 128,
-    num_layers: int = 2,
-    num_heads: int = 4,
-    dropout: float = 0.2,
     threshold: float = 0.5
 ):
-    """Load and cache the model and data."""
+    """Load and cache metadata + cached-embedding predictor."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Load data
     data_dict = load_processed_data(processed_dir)
+    cache_path = Path(embeddings_dir)
+    required_files = [
+        cache_path / 'chemical_embeddings.npy',
+        cache_path / 'disease_embeddings.npy',
+        cache_path / 'W_cd.pt'
+    ]
+    missing = [str(p.name) for p in required_files if not p.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Cached embeddings are required for Streamlit inference to avoid OOM. "
+            f"Missing files in {embeddings_dir}: {missing}. "
+            "Run scripts/cache_embeddings_chunked.py first."
+        )
 
-    if use_cache:
-        cache_path = Path(embeddings_dir)
-        required_files = [
-            cache_path / 'chemical_embeddings.npy',
-            cache_path / 'disease_embeddings.npy',
-            cache_path / 'W_cd.pt'
-        ]
-        if all(p.exists() for p in required_files):
-            predictor = EmbeddingCachePredictor.from_cache(
-                cache_dir=embeddings_dir,
-                disease_df=data_dict['diseases'],
-                chemical_df=data_dict['chemicals'],
-                chem_disease_df=data_dict.get('chem_disease'),
-                device=device,
-                threshold=threshold
-            )
-            return predictor, data_dict, True
-        st.warning("Cached embeddings not found; falling back to full model load.")
-    
-    # Build graph with extended nodes (pathway, go_term) if available
-    data, vocabs = build_graph_from_processed(
-        processed_data_dir=processed_dir,
-        add_reverse_edges=True,
-        save_vocabs=False,
-        include_extended=True
-    )
-    
-    # Create model with all node types from the graph
-    num_nodes_dict = {node_type: data[node_type].num_nodes for node_type in data.node_types}
-    node_input_dims = {
-        ntype: int(data[ntype].x.size(1))
-        for ntype in data.node_types
-        if isinstance(data[ntype].x, torch.Tensor)
-        and data[ntype].x.dim() == 2
-        and data[ntype].x.is_floating_point()
-    }
-    
-    model = HGTPredictor(
-        num_nodes_dict=num_nodes_dict,
-        metadata=data.metadata(),
-        node_input_dims=node_input_dims,
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        num_heads=num_heads,
-        dropout=dropout,
-        num_action_types=vocabs['action_type'].height,
-        num_action_subjects=vocabs['action_subject'].height
-    )
-    
-    # Load checkpoint
-    load_checkpoint(checkpoint_path, model, device=device)
-    
-    # Create predictor
-    predictor = ChemDiseasePredictor(
-        model=model,
-        data=data,
+    predictor = CachedEmbeddingPredictor.from_cache(
+        cache_dir=embeddings_dir,
         disease_df=data_dict['diseases'],
         chemical_df=data_dict['chemicals'],
+        chem_disease_df=data_dict.get('chem_disease'),
         device=device,
         threshold=threshold
     )
-    
-    return predictor, data_dict, False
+    return predictor, data_dict
 
 
 @st.cache_resource
@@ -109,7 +59,7 @@ def load_graph_for_explain(
     processed_dir: str = './data/processed',
 ):
     """Load the HeteroData graph for explainability (cached)."""
-    data, vocabs = build_graph_from_processed(
+    data, _ = build_graph_from_processed(
         processed_data_dir=processed_dir,
         add_reverse_edges=True,
         save_vocabs=False,
@@ -263,42 +213,21 @@ def main():
     with st.sidebar:
         st.header("Configuration")
         processed_dir = st.text_input("Processed Data Directory", value="./data/processed")
-        checkpoint_path = st.text_input("Model Checkpoint", value="/checkpoints/best.pt")
-        use_cached_embeddings = st.checkbox("Use Cached Embeddings", value=True)
-        embeddings_dir = st.text_input(
-            "Embeddings Directory",
-            value="./embeddings",
-            disabled=not use_cached_embeddings
-        )
-        
-        st.header("Model Parameters")
-        hidden_dim = st.number_input("Hidden Dimension", value=128, min_value=32, max_value=512)
-        num_layers = st.number_input("Number of Layers", value=2, min_value=1, max_value=6)
-        num_heads = st.number_input("Number of Attention Heads", value=4, min_value=1, max_value=16)
-        dropout = st.slider("Dropout", value=0.2, min_value=0.0, max_value=0.5)
+        embeddings_dir = st.text_input("Embeddings Directory", value="./embeddings")
         
         threshold = st.slider("Classification Threshold", value=0.5, min_value=0.0, max_value=1.0)
-        st.caption("Tip: cached embeddings load fast and reduce memory usage.")
+        st.caption("Inference runs in cached-embedding mode to reduce memory usage.")
     
     # Load model
     try:
         with st.spinner("Loading model and data..."):
-            predictor, data_dict, using_cache = load_model_and_data(
+            predictor, data_dict = load_model_and_data(
                 processed_dir=processed_dir,
-                checkpoint_path=checkpoint_path,
                 embeddings_dir=embeddings_dir,
-                use_cache=use_cached_embeddings,
-                hidden_dim=hidden_dim,
-                num_layers=num_layers,
-                num_heads=num_heads,
-                dropout=dropout,
                 threshold=threshold
             )
             predictor.threshold = threshold
-        if using_cache:
-            st.sidebar.success("Loaded cached embeddings successfully!")
-        else:
-            st.sidebar.success("Model loaded successfully!")
+        st.sidebar.success("Loaded cached embeddings successfully!")
     except Exception as e:
         st.error(f"Error loading model: {e}")
         st.stop()
@@ -549,27 +478,21 @@ def main():
                     st.write(f"**Logit:** {result['logit']:.4f}")
                     st.write(f"**Threshold:** {threshold}")
                     st.write(f"**Known in CTD:** {'Yes' if result.get('known', False) else 'No'}")
-                    st.write(f"**Mode:** {'Cached embeddings' if using_cache else 'Full model'}")
+                    st.write("**Mode:** Cached embeddings")
 
                 # Explainability
                 if st.button("Explain prediction", key="explain_pair"):
                     try:
                         with st.spinner("Generating explanation (enumerating paths)..."):
                             node_names = build_node_names(data_dict)
-                            if using_cache:
-                                graph = load_graph_for_explain(
-                                    processed_dir=processed_dir,
-                                )
-                                explanation = predictor.explain_prediction(
-                                    disease_id, chemical_id,
-                                    data=graph,
-                                    node_names=node_names,
-                                )
-                            else:
-                                explanation = predictor.explain_prediction(
-                                    disease_id, chemical_id,
-                                    node_names=node_names,
-                                )
+                            graph = load_graph_for_explain(
+                                processed_dir=processed_dir,
+                            )
+                            explanation = predictor.explain_prediction(
+                                disease_id, chemical_id,
+                                data=graph,
+                                node_names=node_names,
+                            )
                         st.session_state.pair_explanation = explanation
                     except Exception as ex:
                         st.error(f"Explanation error: {ex}")
@@ -709,20 +632,14 @@ def main():
                                 try:
                                     with st.spinner("Generating explanation..."):
                                         node_names = build_node_names(data_dict)
-                                        if using_cache:
-                                            graph = load_graph_for_explain(
-                                                processed_dir=processed_dir,
-                                            )
-                                            explanation = predictor.explain_prediction(
-                                                disease_id_2, chem_id_row,
-                                                data=graph,
-                                                node_names=node_names,
-                                            )
-                                        else:
-                                            explanation = predictor.explain_prediction(
-                                                disease_id_2, chem_id_row,
-                                                node_names=node_names,
-                                            )
+                                        graph = load_graph_for_explain(
+                                            processed_dir=processed_dir,
+                                        )
+                                        explanation = predictor.explain_prediction(
+                                            disease_id_2, chem_id_row,
+                                            data=graph,
+                                            node_names=node_names,
+                                        )
                                     st.session_state.tab2_explanations[explain_key] = explanation
                                 except Exception as ex:
                                     st.error(f"Explanation error: {ex}")
@@ -862,20 +779,14 @@ def main():
                                 try:
                                     with st.spinner("Generating explanation..."):
                                         node_names = build_node_names(data_dict)
-                                        if using_cache:
-                                            graph = load_graph_for_explain(
-                                                processed_dir=processed_dir,
-                                            )
-                                            explanation = predictor.explain_prediction(
-                                                dis_id_row, chemical_id_2,
-                                                data=graph,
-                                                node_names=node_names,
-                                            )
-                                        else:
-                                            explanation = predictor.explain_prediction(
-                                                dis_id_row, chemical_id_2,
-                                                node_names=node_names,
-                                            )
+                                        graph = load_graph_for_explain(
+                                            processed_dir=processed_dir,
+                                        )
+                                        explanation = predictor.explain_prediction(
+                                            dis_id_row, chemical_id_2,
+                                            data=graph,
+                                            node_names=node_names,
+                                        )
                                     st.session_state.tab3_explanations[explain_key] = explanation
                                 except Exception as ex:
                                     st.error(f"Explanation error: {ex}")

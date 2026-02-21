@@ -43,7 +43,7 @@ from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders, negative_sample_cd_batch_local
 from src.data.processing import load_processed_data
-from src.models.hgt import HGTPredictor
+from src.models.architectures.hgt import HGTPredictor
 from src.training.trainer import load_checkpoint
 
 

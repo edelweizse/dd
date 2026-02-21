@@ -2,6 +2,17 @@
 Model definitions.
 """
 
-from .hgt import EdgeAttrHeteroConv, HGTPredictor
-from .predictor import ChemDiseasePredictor
-from .predictor_efficient import EmbeddingCachePredictor, MiniBatchPredictor
+from .architectures.hgt import EdgeAttrHeteroConv, HGTPredictor, HGTMainModel, create_model_from_data
+from .inference.full_graph import ChemDiseasePredictor, FullGraphPredictor
+from .inference.cached_embeddings import EmbeddingCachePredictor, CachedEmbeddingPredictor
+
+__all__ = [
+    'EdgeAttrHeteroConv',
+    'HGTPredictor',
+    'HGTMainModel',
+    'create_model_from_data',
+    'ChemDiseasePredictor',
+    'FullGraphPredictor',
+    'EmbeddingCachePredictor',
+    'CachedEmbeddingPredictor',
+]

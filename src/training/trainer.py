@@ -17,7 +17,7 @@ import mlflow
 from typing import Tuple, Optional, Dict, Any
 
 from src.data.splits import SplitArtifacts, negative_sample_cd_batch_local
-from src.models.hgt import HGTPredictor
+from src.models.architectures.hgt import HGTPredictor
 from .utils import bce_with_logits, eval_epoch
 
 try:

@@ -8,3 +8,5 @@ data/processed/*
 evaluation_results/
 embeddings/
 artifacts/
+splits/*
+!splits/.gitkeep
