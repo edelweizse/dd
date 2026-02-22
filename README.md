@@ -49,6 +49,79 @@ flowchart LR
     class ckpt out;
 ```
 
+## Model Architecture Overview
+
+`HGATPredictor` combines schema-aware heterogeneous message passing with a bilinear CD link decoder:
+- Per-node-type initialization via dense projection (feature mode) or embedding lookup (ID mode)
+- Stacked `EdgeAttrHeteroConv` layers with multi-head attention
+- Optional edge-attribute gates for categorical/continuous edge features
+- Residual + LayerNorm + GELU updates at each message-passing layer
+- Bilinear decoder (`W_cd`) for chemical-disease scoring
+
+```mermaid
+flowchart LR
+    xdict["Node Inputs (`x_dict`)"]
+    edgeidx["Edge Index Dict"]
+    edgeattr["Edge Attr Dict (optional)"]
+    init["Node Init<br/>Embedding / Projection"]
+    conv["EdgeAttrHeteroConv<br/>Multi-head HGAT"]
+    post["Residual + LayerNorm + GELU"]
+    stack["Repeat (`num_layers`)"]
+    zchem["z_chemical"]
+    zdis["z_disease"]
+    decoder["Bilinear Decoder<br/>score = c^T W_cd d"]
+    logits["CD Link Logits"]
+
+    xdict --> init --> conv --> post --> stack --> zchem
+    edgeidx --> conv
+    edgeattr --> conv
+    stack --> zdis
+    zchem --> decoder
+    zdis --> decoder --> logits
+
+    classDef io fill:#F1F3F5,stroke:#868E96,color:#343A40;
+    classDef core fill:#E3FAFC,stroke:#1098AD,color:#0B4F5C;
+    classDef out fill:#E6FCF5,stroke:#0CA678,color:#0B4F3A;
+
+    class xdict,edgeidx,edgeattr io;
+    class init,conv,post,stack,decoder core;
+    class zchem,zdis,logits out;
+```
+
+## Results Snapshot
+
+The metrics below are from the current local evaluation artifacts:
+- `evaluation_results/metrics.json`
+- `baseline_comparison/comparison_results.json`
+
+### Main Model (Evaluation Report)
+
+| Metric | Value |
+|---|---:|
+| AUROC | 0.9489 |
+| AUPRC | 0.4711 |
+| MRR | 0.7083 |
+| Hits@10 | 0.9992 |
+| Hits@20 | 1.0000 |
+| Hits@50 | 1.0000 |
+
+### Baseline Comparison (Shared Split Protocol)
+
+| Model | Val AUPRC | Test AUPRC | Val AUROC | Test AUROC |
+|---|---:|---:|---:|---:|
+| `main_hgat` | 0.3921 | 0.3984 | 0.9259 | 0.9280 |
+| `degree` | 0.1782 | 0.1873 | 0.7801 | 0.7847 |
+| `mf` | 0.1695 | 0.1794 | 0.7558 | 0.7579 |
+
+```mermaid
+flowchart LR
+    eval["`scripts.evaluate`"] --> mjson["`evaluation_results/metrics.json`"]
+    eval --> report["`evaluation_results/report.html`"]
+    compare["`scripts.compare_baselines`"] --> cjson["`baseline_comparison/comparison_results.json`"]
+    mjson --> snapshot["README Results Snapshot"]
+    cjson --> snapshot
+```
+
 ## Quick Start
 
 Run commands from repository root.
