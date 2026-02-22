@@ -1,0 +1,35 @@
+paths:
+  checkpoint: ./checkpoints/best.pt
+  processed_dir: ./data/processed
+  output_dir: ./baseline_comparison
+
+split:
+  split_artifact_path: ./splits/cd_split_seed42.pt
+  seed: 42
+  val_ratio: 0.1
+  test_ratio: 0.1
+  split_strategy: stratified
+  stratify_bins: 8
+
+runtime:
+  cpu: true
+  batch_size: 1024
+  num_neighbours: [5, 3]
+
+baselines:
+  baselines: degree,mf
+  hidden_dim: 64
+  num_layers: 2
+  num_heads: 4
+  dropout: 0.2
+  epochs: 10
+  lr: 0.0003
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  num_neg_train: 2
+  num_neg_eval: 20
+
+protocol:
+  protocol_config: ./configs/examples/eval_protocol.yaml
+  protocol_strict: true
+  allow_noncomparable: false

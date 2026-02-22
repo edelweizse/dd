@@ -137,6 +137,8 @@ def main():
                         help='Number of log-degree bins for stratified split')
     parser.add_argument('--no-enforce-train-node-coverage', action='store_true',
                         help='Disable best-effort train node coverage rebalancing')
+    parser.add_argument('--split-artifact-path', type=str, default=None,
+                        help='Optional path to load a saved train/val/test split artifact')
     parser.add_argument('--save-split-artifact', type=str, default=None,
                         help='Optional path to save train/val/test split artifact for reuse')
     
@@ -191,18 +193,53 @@ def main():
     
     print('Preparing data splits and loaders...')
     print(f'Neighbor sampling: {args.num_neighbours}')
+    if args.split_artifact_path and args.save_split_artifact:
+        print(
+            'Both --split-artifact-path and --save-split-artifact were provided; '
+            'training will use --split-artifact-path.'
+        )
+
+    split_artifact_path = args.split_artifact_path
+    if not split_artifact_path:
+        split_artifact_path = args.save_split_artifact
+        if not split_artifact_path:
+            split_artifact_path = str(Path(ckpt_dir) / 'cd_split.pt')
+
+        print(f'Generating split artifact at: {split_artifact_path}')
+        _ = prepare_splits_and_loaders(
+            data_full=data,
+            val_ratio=args.val_ratio,
+            test_ratio=args.test_ratio,
+            seed=args.seed,
+            split_strategy=args.split_strategy,
+            stratify_bins=args.stratify_bins,
+            enforce_train_node_coverage=not args.no_enforce_train_node_coverage,
+            batch_size=args.batch_size,
+            num_neighbours=args.num_neighbours,
+            split_artifact_save_path=split_artifact_path
+        )
+
+    print(f'Using split artifact: {split_artifact_path}')
     arts = prepare_splits_and_loaders(
-        data_full = data,
-        val_ratio = args.val_ratio,
-        test_ratio = args.test_ratio,
-        seed = args.seed,
-        split_strategy = args.split_strategy,
-        stratify_bins = args.stratify_bins,
-        enforce_train_node_coverage = not args.no_enforce_train_node_coverage,
-        batch_size = args.batch_size,
-        num_neighbours = args.num_neighbours,
-        split_artifact_save_path = args.save_split_artifact
+        data_full=data,
+        val_ratio=args.val_ratio,
+        test_ratio=args.test_ratio,
+        seed=args.seed,
+        split_strategy=args.split_strategy,
+        stratify_bins=args.stratify_bins,
+        enforce_train_node_coverage=not args.no_enforce_train_node_coverage,
+        batch_size=args.batch_size,
+        num_neighbours=args.num_neighbours,
+        split_artifact_load_path=split_artifact_path
     )
+    if arts.split_metadata:
+        print(
+            'Loaded split metadata: '
+            f"seed={arts.split_metadata.get('seed')}, "
+            f"val_ratio={arts.split_metadata.get('val_ratio')}, "
+            f"test_ratio={arts.split_metadata.get('test_ratio')}, "
+            f"strategy={arts.split_metadata.get('split_strategy')}"
+        )
     
     num_action_types = vocabs['action_type'].height
     num_action_subjects = vocabs['action_subject'].height
@@ -257,6 +294,7 @@ def main():
     )
     
     print(f'Training complete! Checkpoints saved to: {ckpt_dir}')
+    print(f'Split artifact used: {split_artifact_path}')
 
 
 if __name__ == '__main__':

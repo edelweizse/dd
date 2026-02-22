@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import roc_auc_score, average_precision_score
 from typing import Dict, Tuple
+import time
 
 
 def bce_with_logits(
@@ -121,6 +122,9 @@ def eval_epoch(
     sampling_seed: int | None = None,
     global_chem_degree: torch.Tensor | None = None,
     global_dis_degree: torch.Tensor | None = None,
+    progress_every: int = 0,
+    max_batches: int = 0,
+    progress_prefix: str | None = None,
 ) -> Dict[str, float]:
     """
     Evaluate model on a data loader.
@@ -162,7 +166,11 @@ def eval_epoch(
     hits_sums = {k: 0.0 for k in ks}
     n_pos_total = 0
     
-    for batch in loader:
+    total_batches = len(loader) if hasattr(loader, '__len__') else None
+    t0 = time.time()
+    for batch_idx, batch in enumerate(loader, start=1):
+        if int(max_batches) > 0 and batch_idx > int(max_batches):
+            break
         batch = batch.to(device)
         cd_edge_store = batch[('chemical', 'associated_with', 'disease')]
         pos_edge = cd_edge_store.edge_label_index  # [2, B] local
@@ -199,6 +207,21 @@ def eval_epoch(
         mrr_sum += r['mrr'] * B
         for k in ks:
             hits_sums[k] += r[f'hits_{k}'] * B
+
+        if int(progress_every) > 0 and (batch_idx % int(progress_every) == 0):
+            done = batch_idx
+            total = (
+                min(int(total_batches), int(max_batches))
+                if total_batches is not None and int(max_batches) > 0
+                else total_batches
+            )
+            prefix = f"{progress_prefix} " if progress_prefix else ""
+            total_str = str(total) if total is not None else "?"
+            print(
+                f"{prefix}batch {done}/{total_str} "
+                f"(elapsed={time.time() - t0:.1f}s)",
+                flush=True,
+            )
     
     y_score = np.concatenate(all_scores, axis=0)
     y_true = np.concatenate(all_labels, axis=0)

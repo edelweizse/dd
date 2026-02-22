@@ -9,6 +9,7 @@ This module provides functionality for:
 
 import torch
 import numpy as np
+import hashlib
 from torch.utils.data import DataLoader
 from torch_geometric.data import HeteroData
 from torch_geometric.loader import LinkNeighborLoader
@@ -66,9 +67,26 @@ class PackedPairFilter:
         
         chem = pos_idx[0].to(torch.int64)
         dis = pos_idx[1].to(torch.int64)
-        keys = (chem * self.num_dis + dis).tolist()
-        self._set = set(keys)
-        self._keys = torch.tensor(sorted(self._set), dtype=torch.int64)
+        max_key_i64 = torch.iinfo(torch.int64).max
+        max_chem = int(chem.max().item()) if chem.numel() > 0 else 0
+        max_dis = int(dis.max().item()) if dis.numel() > 0 else 0
+        can_pack = (
+            self.num_dis >= 0
+            and max_chem >= 0
+            and max_dis >= 0
+            and (self.num_dis == 0 or max_chem <= (max_key_i64 - max_dis) // max(self.num_dis, 1))
+        )
+
+        self._packed_mode = bool(can_pack)
+        if self._packed_mode:
+            keys = (chem * self.num_dis + dis).tolist()
+            self._set = set(keys)
+            self._keys = torch.tensor(sorted(self._set), dtype=torch.int64)
+            self._pair_set: set[tuple[int, int]] | None = None
+        else:
+            self._pair_set = set(zip(chem.tolist(), dis.tolist()))
+            self._set = set(self._pair_set)
+            self._keys = torch.empty(0, dtype=torch.int64)
     
     def contains_mask_cpu(
         self,
@@ -87,10 +105,17 @@ class PackedPairFilter:
         """
         chem = chem.to(torch.int64).cpu()
         dis = dis.to(torch.int64).cpu()
-        keys = chem * self.num_dis + dis
-        if self._keys.numel() == 0:
-            return torch.zeros_like(keys, dtype=torch.bool)
-        return torch.isin(keys, self._keys)
+        if self._packed_mode:
+            keys = chem * self.num_dis + dis
+            if self._keys.numel() == 0:
+                return torch.zeros_like(keys, dtype=torch.bool)
+            return torch.isin(keys, self._keys)
+
+        if chem.numel() == 0:
+            return torch.zeros_like(chem, dtype=torch.bool)
+        assert self._pair_set is not None
+        mask = [((int(c), int(d)) in self._pair_set) for c, d in zip(chem.tolist(), dis.tolist())]
+        return torch.tensor(mask, dtype=torch.bool)
 
 
 def _get_global_node_ids(batch_data: HeteroData, node_type: str) -> torch.Tensor:
@@ -104,7 +129,16 @@ def _get_global_node_ids(batch_data: HeteroData, node_type: str) -> torch.Tensor
         return store.n_id.view(-1).long()
 
     # Backward compatibility: x may contain global IDs in legacy graphs.
-    return store.x.view(-1).long()
+    x = getattr(store, 'x', None)
+    if isinstance(x, torch.Tensor) and not x.is_floating_point():
+        if x.dim() == 1:
+            return x.view(-1).long()
+        if x.dim() == 2 and x.size(1) == 1:
+            return x.view(-1).long()
+    raise ValueError(
+        f'Cannot infer global IDs for node type "{node_type}". '
+        'Expected node_id/n_id, or integral x with shape [N] or [N,1].'
+    )
 
 
 def _compute_split_counts(E: int, val_ratio: float, test_ratio: float) -> Tuple[int, int, int]:
@@ -508,6 +542,11 @@ def _build_split_metadata(
     cd_rel: Tuple[str, str, str] = ('chemical', 'associated_with', 'disease'),
 ) -> Dict[str, Any]:
     """Build metadata that describes split generation inputs and graph sizes."""
+    cd_edge_index = data_full[cd_rel].edge_index.detach().cpu().long()
+    cd_sorted = np.asarray(cd_edge_index.t().numpy(), dtype=np.int64)
+    if cd_sorted.shape[0] > 1:
+        cd_sorted = cd_sorted[np.lexsort((cd_sorted[:, 1], cd_sorted[:, 0]))]
+    cd_edge_set_sha256 = hashlib.sha256(cd_sorted.tobytes()).hexdigest()
     return {
         'version': SPLIT_ARTIFACT_VERSION,
         'created_at_utc': datetime.now(timezone.utc).isoformat(),
@@ -520,6 +559,7 @@ def _build_split_metadata(
         'num_chemical_nodes': int(data_full['chemical'].num_nodes),
         'num_disease_nodes': int(data_full['disease'].num_nodes),
         'num_cd_edges': int(data_full[cd_rel].edge_index.size(1)),
+        'cd_edge_set_sha256': cd_edge_set_sha256,
         'cd_relation': list(cd_rel),
         'num_train_edges': int(split.train_pos.size(1)),
         'num_val_edges': int(split.val_pos.size(1)),
@@ -632,6 +672,7 @@ def validate_split_artifact_compatibility(
     artifact_num_chem = metadata.get('num_chemical_nodes')
     artifact_num_dis = metadata.get('num_disease_nodes')
     artifact_num_edges = metadata.get('num_cd_edges')
+    artifact_cd_edge_hash = metadata.get('cd_edge_set_sha256')
     artifact_cd_relation = metadata.get('cd_relation')
 
     if not isinstance(artifact_num_chem, int):
@@ -670,6 +711,30 @@ def validate_split_artifact_compatibility(
         errors.append(
             f'split edge total mismatch (split_total={split_total}, current={num_cd_edges}).'
         )
+
+    current_cd = data_full[cd_rel].edge_index.detach().cpu().long()
+    split_all = torch.cat([split.train_pos, split.val_pos, split.test_pos], dim=1).contiguous().cpu().long()
+    current_pairs = np.asarray(current_cd.t().numpy(), dtype=np.int64)
+    split_pairs = np.asarray(split_all.t().numpy(), dtype=np.int64)
+    if current_pairs.shape[0] > 1:
+        current_pairs = current_pairs[np.lexsort((current_pairs[:, 1], current_pairs[:, 0]))]
+    if split_pairs.shape[0] > 1:
+        split_pairs = split_pairs[np.lexsort((split_pairs[:, 1], split_pairs[:, 0]))]
+    if current_pairs.shape != split_pairs.shape or not np.array_equal(current_pairs, split_pairs):
+        errors.append(
+            'split edge multiset does not match the current CD edge multiset; '
+            'artifact likely belongs to a different processed graph.'
+        )
+
+    current_cd_edge_hash = hashlib.sha256(current_pairs.tobytes()).hexdigest()
+    if artifact_cd_edge_hash is not None:
+        if not isinstance(artifact_cd_edge_hash, str):
+            errors.append('metadata.cd_edge_set_sha256 must be a string when present.')
+        elif artifact_cd_edge_hash != current_cd_edge_hash:
+            errors.append(
+                'CD edge-set hash mismatch '
+                f'(artifact={artifact_cd_edge_hash}, current={current_cd_edge_hash}).'
+            )
 
     for split_name, edge_idx in (
         ('train_pos', split.train_pos),
@@ -749,7 +814,9 @@ def negative_sample_cd_batch_local(
     by corrupting either the chemical OR the disease (not both initially).
     
     On collision (if randomly generated pair is a known positive),
-    maintains the same corruption strategy for consistency.
+    re-samples while maintaining the same corruption strategy. If collisions
+    remain after retries, a deterministic repair pass is used that may switch
+    corruption side for unresolved samples.
     
     Args:
         batch_data: Batch HeteroData from LinkNeighborLoader.
@@ -874,10 +941,67 @@ def negative_sample_cd_batch_local(
         if nc_coll > 0:
             chem_l[coll_corrupt_chem] = _sample_ids(nc_coll, nchem, chem_weights)
 
-    # Safety net: never emit known positives as negatives.
+    # Final repair pass for unresolved collisions. This handles edge cases where
+    # the initially chosen corruption side has no feasible negatives in the
+    # sampled local node set.
     chem_g = chem_gid[chem_l].cpu()
     dis_g = dis_gid[dis_l].cpu()
     coll = known_pos.contains_mask_cpu(chem_g, dis_g).to(device)
+    if bool(coll.any()):
+        orig_chem_l = pos_edge_index_local[0].repeat_interleave(num_neg_per_pos).clone()
+        orig_dis_l = pos_edge_index_local[1].repeat_interleave(num_neg_per_pos).clone()
+        unresolved = torch.nonzero(coll, as_tuple=False).view(-1)
+
+        for idx_t in unresolved:
+            idx = int(idx_t.item())
+            base_chem = int(orig_chem_l[idx].item())
+            base_dis = int(orig_dis_l[idx].item())
+
+            # Prefer keeping the original corruption side, then try the opposite.
+            prefer_dis = bool(corrupt_disease[idx].item())
+            try_orders = (True, False) if prefer_dis else (False, True)
+            placed = False
+
+            for try_dis in try_orders:
+                if try_dis:
+                    cand_chem_l = torch.full((ndis,), base_chem, dtype=torch.long, device=device)
+                    cand_dis_l = torch.arange(ndis, dtype=torch.long, device=device)
+                else:
+                    cand_chem_l = torch.arange(nchem, dtype=torch.long, device=device)
+                    cand_dis_l = torch.full((nchem,), base_dis, dtype=torch.long, device=device)
+
+                cand_chem_g = chem_gid[cand_chem_l].cpu()
+                cand_dis_g = dis_gid[cand_dis_l].cpu()
+                valid = ~known_pos.contains_mask_cpu(cand_chem_g, cand_dis_g)
+                if not bool(valid.any()):
+                    continue
+
+                valid_idx = torch.nonzero(valid, as_tuple=False).view(-1)
+                pick_offset = int(
+                    torch.randint(
+                        low=0,
+                        high=int(valid_idx.numel()),
+                        size=(1,),
+                        generator=generator,
+                    ).item()
+                )
+                pick = int(valid_idx[pick_offset].item())
+                chem_l[idx] = cand_chem_l[pick]
+                dis_l[idx] = cand_dis_l[pick]
+                corrupt_disease[idx] = bool(try_dis)
+                placed = True
+                break
+
+            if not placed:
+                raise RuntimeError(
+                    'Negative sampling failed: no valid local negative exists for '
+                    f'pos sample index {idx} (batch has saturated neighborhoods).'
+                )
+
+        chem_g = chem_gid[chem_l].cpu()
+        dis_g = dis_gid[dis_l].cpu()
+        coll = known_pos.contains_mask_cpu(chem_g, dis_g).to(device)
+    # Safety net: never emit known positives as negatives.
     if bool(coll.any()):
         raise RuntimeError(
             'Negative sampling failed to resolve collisions after '

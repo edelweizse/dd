@@ -1,0 +1,36 @@
+paths:
+  raw_dir: ./data/raw
+  processed_dir: ./data/processed
+  work_dir: /tmp/dd_generic_hgt_e2e_example
+
+data:
+  skip_process: false
+
+split:
+  seed: 123
+  val_ratio: 0.1
+  test_ratio: 0.1
+  split_strategy: stratified
+  stratify_bins: 8
+
+model:
+  hidden_dim: 32
+  num_layers: 1
+  num_heads: 4
+  dropout: 0.1
+
+training:
+  epochs: 1
+  lr: 0.0003
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  num_neg_train: 2
+  num_neg_eval: 2
+
+runtime:
+  batch_size: 1024
+  num_neighbours: [3, 2]
+
+baselines:
+  baseline_models: degree,mf,generic_hgt
+  baseline_epochs: 1

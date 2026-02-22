@@ -2,33 +2,22 @@
 Path scoring for chemical-disease explainability.
 
 Given enumerated PathInstance objects and (optionally) per-edge attention
-weights from the HGT model, compute a composite score for each path.
+weights from the model, compute a composite score for each path.
 
-Scoring formula per path:
-    path_score = attention_score * embedding_similarity
-
-Where:
-  - attention_score: geometric mean of edge attention weights along the path
-    (falls back to 1.0 when attention is unavailable).
-  - embedding_similarity: cosine similarity between the intermediate node
-    embeddings and the target chemical/disease embeddings, averaged over
-    intermediate nodes.  This captures "how relevant is this intermediary
-    to both the chemical and disease?".
+Combined score:
+    combined_score = w_attn * attention_score + w_emb * embedding_score
 """
 
 from __future__ import annotations
 
-import math
-import torch
+import heapq
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+import torch
+
 from .paths import PathInstance
 
-
-# ---------------------------------------------------------------------------
-# Human-readable evidence labels
-# ---------------------------------------------------------------------------
 
 _TEMPLATE_LABELS: Dict[str, str] = {
     "chem-gene-disease": "Shared gene target",
@@ -57,18 +46,15 @@ _EDGE_VERB: Dict[Tuple[str, str, str], str] = {
 @dataclass
 class ScoredPath:
     """A path with computed relevance scores and human-readable description."""
+
     path: PathInstance
-    attention_score: float          # geometric mean of edge attentions
-    embedding_score: float          # intermediate-node embedding similarity
-    combined_score: float           # final ranking score
-    evidence_type: str              # human label (e.g. "Shared gene target")
-    description: str                # full human-readable path string
-    edge_attentions: List[float] = field(default_factory=list)  # per-edge
+    attention_score: float
+    embedding_score: float
+    combined_score: float
+    evidence_type: str
+    description: str
+    edge_attentions: List[float] = field(default_factory=list)
 
-
-# ---------------------------------------------------------------------------
-# Scoring helpers
-# ---------------------------------------------------------------------------
 
 def _geomean(values: List[float]) -> float:
     """Geometric mean of positive floats, returns 0 if any <= 0."""
@@ -93,56 +79,67 @@ def _cosine_sim(a: torch.Tensor, b: torch.Tensor) -> float:
     return (dot / norm).item()
 
 
-# ---------------------------------------------------------------------------
-# Main scoring function
-# ---------------------------------------------------------------------------
+def _normalize_weights(weight_attention: float, weight_embedding: float) -> Tuple[float, float]:
+    wa = max(0.0, float(weight_attention))
+    we = max(0.0, float(weight_embedding))
+    total = wa + we
+    if total <= 0:
+        return 0.5, 0.5
+    return wa / total, we / total
+
 
 def score_paths(
     paths: List[PathInstance],
     *,
     embeddings: Optional[Dict[str, torch.Tensor]] = None,
-    attention_weights: Optional[List[Dict[Tuple, torch.Tensor]]] = None,
+    attention_weights: Optional[List[Dict[Tuple[str, str, str], torch.Tensor]]] = None,
     node_names: Optional[Dict[str, Dict[int, str]]] = None,
+    weight_attention: float = 0.5,
+    weight_embedding: float = 0.5,
+    top_k: Optional[int] = None,
 ) -> List[ScoredPath]:
     """
     Score and annotate a list of PathInstance objects.
-    
+
     Args:
         paths: Enumerated path instances from the metapath walker.
         embeddings: Node embeddings dict (node_type -> [N, d]).
-            Used for intermediate-node embedding similarity scoring.
-        attention_weights: Per-layer attention dicts from HGTPredictor.encode().
-            attention_weights[layer][edge_type] -> [E] attention values.
-            When provided, enables Tier-2 attention scoring.
+        attention_weights: Per-layer attention dicts from model.encode().
         node_names: Optional name lookup for human-readable descriptions.
-            Maps node_type -> {node_idx -> name_str}.
-            
+        weight_attention: Non-negative attention weight for combined score.
+        weight_embedding: Non-negative embedding-similarity weight.
+        top_k: Optional top-k selection; when set, avoids sorting full list.
+
     Returns:
         List of ScoredPath sorted by combined_score descending.
     """
-    scored: List[ScoredPath] = []
     node_names = node_names or {}
+    use_attention = bool(attention_weights)
+    last_layer = attention_weights[-1] if use_attention else None
+    wa, we = _normalize_weights(weight_attention, weight_embedding)
 
-    for pi in paths:
-        # --- Attention score (Tier 2) ---
+    if top_k is not None and top_k <= 0:
+        top_k = None
+
+    heap: List[Tuple[float, int, ScoredPath]] = []
+    scored_all: List[ScoredPath] = []
+
+    for idx, pi in enumerate(paths):
         edge_attns: List[float] = []
-        if attention_weights is not None:
-            for hop_idx, (et, epos) in enumerate(zip(pi.edge_types, pi.edge_positions)):
+        if last_layer is not None:
+            for et, epos in zip(pi.edge_types, pi.edge_positions):
                 attn_val = 1.0
-                # Use last layer's attention (most refined)
-                last_layer = attention_weights[-1]
                 if et in last_layer and epos >= 0:
                     weights_tensor = last_layer[et]
                     if epos < weights_tensor.size(0):
-                        attn_val = weights_tensor[epos].item()
+                        attn_val = float(weights_tensor[epos].item())
                 edge_attns.append(attn_val)
         else:
             edge_attns = [1.0] * len(pi.edge_types)
 
         attn_score = _geomean(edge_attns)
 
-        # --- Embedding similarity score ---
-        emb_score = 1.0
+        emb_score = 0.0
         if embeddings is not None and len(pi.node_indices) > 2:
             chem_emb = embeddings.get("chemical")
             dis_emb = embeddings.get("disease")
@@ -158,18 +155,16 @@ def score_paths(
                         mid_vec = mid_emb[mid_idx]
                         sim_c = _cosine_sim(mid_vec, chem_vec)
                         sim_d = _cosine_sim(mid_vec, dis_vec)
-                        # Average relevance to both endpoints
-                        mid_sims.append((sim_c + sim_d) / 2.0)
+                        mid_sims.append(max(0.0, (sim_c + sim_d) / 2.0))
                 if mid_sims:
-                    emb_score = max(0.0, sum(mid_sims) / len(mid_sims))
+                    emb_score = sum(mid_sims) / len(mid_sims)
 
-        combined = attn_score * (0.5 + 0.5 * emb_score)
+        combined = wa * attn_score + we * emb_score
 
-        # --- Human-readable description ---
         evidence = _TEMPLATE_LABELS.get(pi.template_name, pi.template_name)
         desc = _build_description(pi, node_names)
 
-        scored.append(ScoredPath(
+        item = ScoredPath(
             path=pi,
             attention_score=attn_score,
             embedding_score=emb_score,
@@ -177,10 +172,23 @@ def score_paths(
             evidence_type=evidence,
             description=desc,
             edge_attentions=edge_attns,
-        ))
+        )
 
-    scored.sort(key=lambda sp: sp.combined_score, reverse=True)
-    return scored
+        if top_k is None:
+            scored_all.append(item)
+        else:
+            entry = (item.combined_score, idx, item)
+            if len(heap) < top_k:
+                heapq.heappush(heap, entry)
+            elif entry[0] > heap[0][0]:
+                heapq.heapreplace(heap, entry)
+
+    if top_k is None:
+        scored_all.sort(key=lambda sp: sp.combined_score, reverse=True)
+        return scored_all
+
+    top = [x[2] for x in sorted(heap, key=lambda x: x[0], reverse=True)]
+    return top
 
 
 def _build_description(
@@ -192,7 +200,6 @@ def _build_description(
     for i, (ntype, nidx) in enumerate(zip(pi.node_types, pi.node_indices)):
         name_map = node_names.get(ntype, {})
         name = name_map.get(nidx, f"{ntype}:{nidx}")
-        # Guard against None values in name lookups
         if name is None:
             name = f"{ntype}:{nidx}"
         parts.append(name)

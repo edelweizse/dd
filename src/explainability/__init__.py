@@ -16,4 +16,23 @@ from .paths import (
     enumerate_paths,
 )
 from .scoring import ScoredPath, score_paths
-from .explain import ExplanationResult, explain_pair
+from .schema import ExplainContext, ExplainRequest, ExplanationResult
+from .explain import explain, explain_pair, build_node_names
+from .service import ExplainService
+
+__all__ = [
+    'METAPATH_TEMPLATES',
+    'PathInstance',
+    'AdjacencyIndex',
+    'build_adjacency',
+    'enumerate_paths',
+    'ScoredPath',
+    'score_paths',
+    'ExplainRequest',
+    'ExplainContext',
+    'ExplanationResult',
+    'ExplainService',
+    'explain',
+    'explain_pair',
+    'build_node_names',
+]

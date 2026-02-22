@@ -13,8 +13,8 @@ This script generates:
 - Publication-ready tables and figures
 
 Usage:
-    python scripts/evaluate.py --checkpoint /checkpoints/best.pt
-    python scripts/evaluate.py --checkpoint /checkpoints/best.pt --output-dir evaluation_results
+    python scripts/evaluate.py --checkpoint ./checkpoints/best.pt
+    python scripts/evaluate.py --checkpoint ./checkpoints/best.pt --output-dir evaluation_results
 """
 
 import argparse
@@ -29,7 +29,6 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (
@@ -43,8 +42,12 @@ from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders, negative_sample_cd_batch_local
 from src.data.processing import load_processed_data
-from src.models.architectures.hgt import HGTPredictor
-from src.training.trainer import load_checkpoint
+from src.evaluation.protocol import (
+    format_protocol_violations,
+    load_evaluation_protocol,
+    validate_evaluation_protocol,
+)
+from src.models.architectures.hgt import HGTPredictor, infer_hgt_hparams_from_state
 
 
 def _batch_global_ids(batch, node_type: str) -> np.ndarray:
@@ -323,7 +326,7 @@ def plot_score_distribution(pos_scores: np.ndarray, neg_scores: np.ndarray, outp
     # Box plot
     ax2 = axes[1]
     data = [neg_scores, pos_scores]
-    bp = ax2.boxplot(data, labels=['Negative', 'Positive'], patch_artist=True)
+    bp = ax2.boxplot(data, tick_labels=['Negative', 'Positive'], patch_artist=True)
     bp['boxes'][0].set_facecolor(COLORS['accent'])
     bp['boxes'][1].set_facecolor(COLORS['primary'])
     for box in bp['boxes']:
@@ -486,7 +489,7 @@ def plot_per_entity_performance(
                 'mean_pos_score': entity_pos_scores.mean(),
                 'name': entity_names.get(eid, f'ID:{eid}')
             }
-        except:
+        except ValueError:
             continue
     
     if not entity_metrics:
@@ -628,10 +631,6 @@ def generate_top_predictions_table(
     all_chem_ids = np.concatenate([predictions['pos_chem_ids'], predictions['neg_chem_ids']])
     all_dis_ids = np.concatenate([predictions['pos_dis_ids'], predictions['neg_dis_ids']])
     all_scores = np.concatenate([predictions['pos_scores'], predictions['neg_scores']])
-    all_labels = np.concatenate([
-        np.ones(len(predictions['pos_scores'])),
-        np.zeros(len(predictions['neg_scores']))
-    ])
     
     # Sort by score
     sorted_idx = np.argsort(all_scores)[::-1]
@@ -651,7 +650,7 @@ def generate_top_predictions_table(
             continue
         seen.add(pair)
         
-        is_known = int(all_labels[idx]) == 1
+        is_known = pair in known_pos_set
         
         rows.append({
             'Rank': len(rows) + 1,
@@ -888,6 +887,29 @@ def main():
                         help='Exponent for degree-biased negative sampling')
     parser.add_argument('--split-artifact-path', type=str, default=None,
                         help='Optional path to saved split artifact; reuses exact split if provided')
+    parser.add_argument(
+        '--protocol-config',
+        type=str,
+        default='./configs/examples/eval_protocol.yaml',
+        help='Evaluation protocol config (YAML)'
+    )
+    parser.add_argument(
+        '--allow-noncomparable',
+        action='store_true',
+        help='Allow protocol violations (marks outputs non-comparable instead of failing)'
+    )
+    parser.add_argument(
+        '--protocol-strict',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Fail on protocol violations unless --allow-noncomparable is set'
+    )
+    parser.add_argument(
+        '--protocol-report-path',
+        type=str,
+        default=None,
+        help='Optional JSON path to save protocol validation report'
+    )
     
     args, _ = parse_args_with_config(parser)
     
@@ -947,6 +969,42 @@ def main():
             f"val_ratio={arts.split_metadata.get('val_ratio')}, "
             f"test_ratio={arts.split_metadata.get('test_ratio')}"
         )
+
+    protocol = load_evaluation_protocol(args.protocol_config)
+    protocol_result = validate_evaluation_protocol(
+        protocol,
+        split_artifact_path=args.split_artifact_path,
+        split_metadata=arts.split_metadata,
+        num_neg_eval=int(args.num_neg_eval),
+        eval_hard_negative_ratio=float(args.eval_hard_negative_ratio),
+        runtime_seed=int(args.seed),
+        runtime_val_ratio=float(args.val_ratio),
+        runtime_test_ratio=float(args.test_ratio),
+        runtime_split_strategy=str(args.split_strategy),
+        runtime_stratify_bins=int(args.stratify_bins),
+        allow_noncomparable=bool(args.allow_noncomparable),
+    )
+    strict_mode = bool(args.protocol_strict) and not bool(args.allow_noncomparable)
+    if protocol_result.violations:
+        msg = format_protocol_violations(protocol_result.violations, prefix='Evaluation protocol violation')
+        if strict_mode:
+            raise ValueError(msg)
+        print(msg)
+        print('Proceeding in non-comparable mode due to --allow-noncomparable.')
+    else:
+        print('Evaluation protocol check passed.')
+    protocol_payload = {
+        'version': int(protocol.version),
+        'config_path': str(Path(args.protocol_config).expanduser()),
+        'strict_mode': bool(strict_mode),
+        'allow_noncomparable': bool(args.allow_noncomparable),
+        **protocol_result.to_dict(),
+    }
+    if args.protocol_report_path:
+        report_path = Path(args.protocol_report_path)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(protocol_payload, indent=2))
+        print(f'Saved protocol report: {report_path}')
     
     # Load model
     print("\n" + "="*60)
@@ -962,20 +1020,22 @@ def main():
         and data[ntype].x.is_floating_point()
     }
     
+    ckpt = torch.load(args.checkpoint, map_location=device)
+    model_cfg = infer_hgt_hparams_from_state(ckpt['model_state'])
     model = HGTPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=arts.data_train.metadata(),
-        node_input_dims=node_input_dims,
-        hidden_dim=256,  # Will be overwritten by checkpoint
-        num_layers=3,
-        num_heads=8,
-        dropout=0.05411689885916049,
-        num_action_types=vocabs['action_type'].height,
-        num_action_subjects=vocabs['action_subject'].height
+        node_input_dims=model_cfg['node_input_dims'] or node_input_dims,
+        hidden_dim=model_cfg['hidden_dim'],
+        num_layers=model_cfg['num_layers'],
+        num_heads=model_cfg['num_heads'],
+        dropout=0.0,  # eval mode; value does not affect results
+        num_action_types=model_cfg['num_action_types'] or vocabs['action_type'].height,
+        num_action_subjects=model_cfg['num_action_subjects'] or vocabs['action_subject'].height,
+        num_pheno_action_types=model_cfg['num_pheno_action_types'],
     )
     
-    # Load checkpoint
-    ckpt = torch.load(args.checkpoint, map_location=device)
+    # Load checkpoint weights
     model.load_state_dict(ckpt['model_state'])
     model = model.to(device)
     model.eval()
@@ -1046,7 +1106,7 @@ def main():
         f.write(report)
     
     with open(output_dir / 'metrics.json', 'w') as f:
-        json.dump({**metrics, **ranking_metrics}, f, indent=2)
+        json.dump({**metrics, **ranking_metrics, 'evaluation_protocol': protocol_payload}, f, indent=2)
     
     # Generate plots
     print("\n" + "="*60)
@@ -1099,7 +1159,8 @@ def main():
     
     # Top predictions
     print("Generating top predictions table...")
-    known_pos_set = set()  # Would need to build from arts.known_pos
+    cd_full = data[('chemical', 'associated_with', 'disease')].edge_index.cpu().numpy()
+    known_pos_set = set(zip(cd_full[0].tolist(), cd_full[1].tolist()))
     top_preds = generate_top_predictions_table(
         predictions, chem_names, dis_names, known_pos_set
     )

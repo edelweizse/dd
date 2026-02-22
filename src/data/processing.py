@@ -457,6 +457,7 @@ def build_pathway_entities(
         .join(genes_core.lazy().select(['GENE_NCBI_ID']), on='GENE_NCBI_ID', how='inner')
         .select(['PATHWAY_ID', 'PATHWAY_NAME'])
         .unique('PATHWAY_ID')
+        .rename({'PATHWAY_NAME': 'PATHWAY_NAME_GENE'})
         .with_columns(pl.lit(1).alias('IN_GENE_PATHWAYS'))
     )
     
@@ -466,6 +467,7 @@ def build_pathway_entities(
         .join(ds_core.lazy().select(['DS_OMIM_MESH_ID']), on='DS_OMIM_MESH_ID', how='inner')
         .select(['PATHWAY_ID', 'PATHWAY_NAME'])
         .unique('PATHWAY_ID')
+        .rename({'PATHWAY_NAME': 'PATHWAY_NAME_DISEASE'})
         .with_columns(pl.lit(1).alias('IN_DISEASE_PATHWAYS'))
     )
     
@@ -475,19 +477,29 @@ def build_pathway_entities(
         .join(chems_core.lazy().select(['CHEM_MESH_ID']), on='CHEM_MESH_ID', how='inner')
         .select(['PATHWAY_ID', 'PATHWAY_NAME'])
         .unique('PATHWAY_ID')
+        .rename({'PATHWAY_NAME': 'PATHWAY_NAME_CHEM'})
         .with_columns(pl.lit(1).alias('IN_CHEM_PATHWAYS'))
     )
     
     # Union all pathways and count sources
     all_pathways = (
         pathways_from_genes
-        .join(pathways_from_diseases, on=['PATHWAY_ID', 'PATHWAY_NAME'], how='outer_coalesce')
-        .join(pathways_from_chems, on=['PATHWAY_ID', 'PATHWAY_NAME'], how='outer_coalesce')
+        .join(pathways_from_diseases, on='PATHWAY_ID', how='full', coalesce=True)
+        .join(pathways_from_chems, on='PATHWAY_ID', how='full', coalesce=True)
         .with_columns([
             pl.col('IN_GENE_PATHWAYS').fill_null(0),
             pl.col('IN_DISEASE_PATHWAYS').fill_null(0),
             pl.col('IN_CHEM_PATHWAYS').fill_null(0),
         ])
+        .with_columns(
+            pl.coalesce(
+                [
+                    pl.col('PATHWAY_NAME_GENE'),
+                    pl.col('PATHWAY_NAME_DISEASE'),
+                    pl.col('PATHWAY_NAME_CHEM'),
+                ]
+            ).alias('PATHWAY_NAME')
+        )
         .with_columns(
             (pl.col('IN_GENE_PATHWAYS') + pl.col('IN_DISEASE_PATHWAYS') + pl.col('IN_CHEM_PATHWAYS'))
             .alias('SOURCE_COUNT')
@@ -570,8 +582,8 @@ def build_go_term_entities(
     # Union all GO terms
     all_go_terms = (
         go_from_chem_enriched
-        .join(go_from_pheno_ixns.select(['GO_ID', 'IN_PHENO_IXNS']), on='GO_ID', how='outer_coalesce')
-        .join(go_from_pheno_disease.select(['GO_ID', 'IN_PHENO_DISEASE']), on='GO_ID', how='outer_coalesce')
+        .join(go_from_pheno_ixns.select(['GO_ID', 'IN_PHENO_IXNS']), on='GO_ID', how='full', coalesce=True)
+        .join(go_from_pheno_disease.select(['GO_ID', 'IN_PHENO_DISEASE']), on='GO_ID', how='full', coalesce=True)
         .with_columns([
             pl.col('IN_CHEM_GO').fill_null(0),
             pl.col('IN_PHENO_IXNS').fill_null(0),

@@ -2,11 +2,12 @@
 mlruns/
 checkpoints/
 mlflow.db
+optuna_hgt.db
 /**/**/__pycache__/
 data/processed/*
 !data/processed/.gitkeep
-evaluation_results/
 embeddings/
 artifacts/
 splits/*
 !splits/.gitkeep
+.pytest_cache/

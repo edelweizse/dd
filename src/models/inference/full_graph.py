@@ -14,8 +14,17 @@ from torch_geometric.data import HeteroData
 from typing import Dict, List, Tuple, Any, Optional
 
 from ..architectures.hgt import HGTPredictor
+from ._shared import (
+    bilinear_score,
+    build_id_mappings,
+    predict_pair_common,
+    rank_chemicals_for_disease_common,
+    rank_diseases_for_chemical_common,
+)
 from ...explainability.paths import AdjacencyIndex, build_adjacency
-from ...explainability.explain import ExplanationResult, explain_pair as _explain_pair, build_node_names
+from ...explainability.explain import build_node_names
+from ...explainability.schema import ExplainContext, ExplainRequest, ExplanationResult
+from ...explainability.service import explain as run_explain
 
 
 class ChemDiseasePredictor:
@@ -55,37 +64,15 @@ class ChemDiseasePredictor:
         self.model = self.model.to(self.device)
         self.model.eval()
         
-        # Build ID mappings
-        # Disease: DS_OMIM_MESH_ID -> DS_ID (internal)
-        self.disease_to_id = dict(zip(
-            disease_df['DS_OMIM_MESH_ID'].to_list(),
-            disease_df['DS_ID'].to_list()
-        ))
-        self.id_to_disease = dict(zip(
-            disease_df['DS_ID'].to_list(),
-            disease_df['DS_OMIM_MESH_ID'].to_list()
-        ))
-        self.disease_names = dict(zip(
-            disease_df['DS_OMIM_MESH_ID'].to_list(),
-            disease_df['DS_NAME'].to_list()
-        ))
-        
-        # Chemical: CHEM_MESH_ID -> CHEM_ID (internal)
-        self.chemical_to_id = dict(zip(
-            chemical_df['CHEM_MESH_ID'].to_list(),
-            chemical_df['CHEM_ID'].to_list()
-        ))
-        self.id_to_chemical = dict(zip(
-            chemical_df['CHEM_ID'].to_list(),
-            chemical_df['CHEM_MESH_ID'].to_list()
-        ))
-        self.chemical_names = dict(zip(
-            chemical_df['CHEM_MESH_ID'].to_list(),
-            chemical_df['CHEM_NAME'].to_list()
-        ))
-        
-        self.num_diseases = len(self.disease_to_id)
-        self.num_chemicals = len(self.chemical_to_id)
+        mappings = build_id_mappings(disease_df, chemical_df)
+        self.disease_to_id = mappings['disease_to_id']
+        self.id_to_disease = mappings['id_to_disease']
+        self.disease_names = mappings['disease_names']
+        self.chemical_to_id = mappings['chemical_to_id']
+        self.id_to_chemical = mappings['id_to_chemical']
+        self.chemical_names = mappings['chemical_names']
+        self.num_diseases = mappings['num_diseases']
+        self.num_chemicals = mappings['num_chemicals']
         
         # Pre-compute node embeddings for fast inference
         self._precompute_embeddings()
@@ -130,10 +117,13 @@ class ChemDiseasePredictor:
         dis_ids: torch.Tensor
     ) -> torch.Tensor:
         """Compute prediction scores for (chemical, disease) pairs."""
-        c = self.z_chem[chem_ids]  # [N, hidden_dim]
-        d = self.z_dis[dis_ids]    # [N, hidden_dim]
-        logits = (c @ self.model.W_cd * d).sum(dim=-1)  # [N]
-        return logits
+        return bilinear_score(
+            z_chem=self.z_chem,
+            z_dis=self.z_dis,
+            decoder_weight=self.model.W_cd,
+            chem_ids=chem_ids,
+            dis_ids=dis_ids,
+        )
     
     def predict_pair(
         self,
@@ -151,33 +141,18 @@ class ChemDiseasePredictor:
             Dict with keys: 'disease_id', 'chemical_id', 'disease_name', 'chemical_name',
                           'probability', 'label', 'logit', 'known'
         """
-        # Validate IDs
-        if disease_id not in self.disease_to_id:
-            raise ValueError(f"Unknown disease ID: {disease_id}")
-        if chemical_id not in self.chemical_to_id:
-            raise ValueError(f"Unknown chemical ID: {chemical_id}")
-        
-        dis_idx = self.disease_to_id[disease_id]
-        chem_idx = self.chemical_to_id[chemical_id]
-        
-        # Compute score
-        chem_tensor = torch.tensor([chem_idx], device=self.device)
-        dis_tensor = torch.tensor([dis_idx], device=self.device)
-        
-        with torch.no_grad():
-            logit = self._compute_score(chem_tensor, dis_tensor).item()
-            prob = torch.sigmoid(torch.tensor(logit)).item()
-        
-        return {
-            'disease_id': disease_id,
-            'chemical_id': chemical_id,
-            'disease_name': self.disease_names.get(disease_id, 'Unknown'),
-            'chemical_name': self.chemical_names.get(chemical_id, 'Unknown'),
-            'probability': prob,
-            'label': int(prob >= self.threshold),
-            'logit': logit,
-            'known': self.is_known_link(chem_idx, dis_idx)
-        }
+        return predict_pair_common(
+            disease_id=disease_id,
+            chemical_id=chemical_id,
+            disease_to_id=self.disease_to_id,
+            chemical_to_id=self.chemical_to_id,
+            disease_names=self.disease_names,
+            chemical_names=self.chemical_names,
+            device=self.device,
+            threshold=self.threshold,
+            compute_score=self._compute_score,
+            is_known_link=self.is_known_link,
+        )
     
     def _get_known_links(self) -> set:
         """Get set of known (chem_idx, dis_idx) pairs from the graph."""
@@ -209,50 +184,18 @@ class ChemDiseasePredictor:
         Returns:
             DataFrame with columns: rank, chemical_id, chemical_name, probability, logit, known
         """
-        if disease_id not in self.disease_to_id:
-            raise ValueError(f"Unknown disease ID: {disease_id}")
-        
-        dis_idx = self.disease_to_id[disease_id]
-        
-        # Score all chemicals against this disease
-        all_chem_ids = torch.arange(self.num_chemicals, device=self.device)
-        dis_ids = torch.full((self.num_chemicals,), dis_idx, device=self.device)
-        
-        with torch.no_grad():
-            logits = self._compute_score(all_chem_ids, dis_ids)
-            probs = torch.sigmoid(logits)
-        
-        # Get known associations
-        cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
-        mask = cd_edge_index[1] == dis_idx
-        known_chems = set(cd_edge_index[0][mask].cpu().tolist())
-        
-        # Sort by probability
-        sorted_indices = torch.argsort(probs, descending=True).cpu().tolist()
-        
-        results = []
-        rank = 1
-        for idx in sorted_indices:
-            is_known = idx in known_chems
-            
-            if exclude_known and is_known:
-                continue
-            
-            chem_mesh_id = self.id_to_chemical[idx]
-            results.append({
-                'rank': rank,
-                'chemical_id': chem_mesh_id,
-                'chemical_name': self.chemical_names.get(chem_mesh_id, 'Unknown'),
-                'probability': probs[idx].item(),
-                'logit': logits[idx].item(),
-                'known': is_known
-            })
-            rank += 1
-            
-            if rank > top_k:
-                break
-        
-        return pl.DataFrame(results)
+        return rank_chemicals_for_disease_common(
+            disease_id=disease_id,
+            disease_to_id=self.disease_to_id,
+            id_to_chemical=self.id_to_chemical,
+            chemical_names=self.chemical_names,
+            num_chemicals=self.num_chemicals,
+            device=self.device,
+            top_k=top_k,
+            exclude_known=exclude_known,
+            compute_score=self._compute_score,
+            is_known_link=self.is_known_link,
+        )
     
     def predict_diseases_for_chemical(
         self,
@@ -271,50 +214,18 @@ class ChemDiseasePredictor:
         Returns:
             DataFrame with columns: rank, disease_id, disease_name, probability, logit, known
         """
-        if chemical_id not in self.chemical_to_id:
-            raise ValueError(f"Unknown chemical ID: {chemical_id}")
-        
-        chem_idx = self.chemical_to_id[chemical_id]
-        
-        # Score all diseases against this chemical
-        all_dis_ids = torch.arange(self.num_diseases, device=self.device)
-        chem_ids = torch.full((self.num_diseases,), chem_idx, device=self.device)
-        
-        with torch.no_grad():
-            logits = self._compute_score(chem_ids, all_dis_ids)
-            probs = torch.sigmoid(logits)
-        
-        # Get known associations
-        cd_edge_index = self.data[('chemical', 'associated_with', 'disease')].edge_index
-        mask = cd_edge_index[0] == chem_idx
-        known_diseases = set(cd_edge_index[1][mask].cpu().tolist())
-        
-        # Sort by probability
-        sorted_indices = torch.argsort(probs, descending=True).cpu().tolist()
-        
-        results = []
-        rank = 1
-        for idx in sorted_indices:
-            is_known = idx in known_diseases
-            
-            if exclude_known and is_known:
-                continue
-            
-            dis_mesh_id = self.id_to_disease[idx]
-            results.append({
-                'rank': rank,
-                'disease_id': dis_mesh_id,
-                'disease_name': self.disease_names.get(dis_mesh_id, 'Unknown'),
-                'probability': probs[idx].item(),
-                'logit': logits[idx].item(),
-                'known': is_known
-            })
-            rank += 1
-            
-            if rank > top_k:
-                break
-        
-        return pl.DataFrame(results)
+        return rank_diseases_for_chemical_common(
+            chemical_id=chemical_id,
+            chemical_to_id=self.chemical_to_id,
+            id_to_disease=self.id_to_disease,
+            disease_names=self.disease_names,
+            num_diseases=self.num_diseases,
+            device=self.device,
+            top_k=top_k,
+            exclude_known=exclude_known,
+            compute_score=self._compute_score,
+            is_known_link=self.is_known_link,
+        )
     
     def batch_predict_pairs(
         self,
@@ -428,9 +339,13 @@ class ChemDiseasePredictor:
         disease_id: str,
         chemical_id: str,
         *,
+        mode: str = 'path_attention',
+        runtime_profile: str = 'fast',
+        template_set: str = 'default',
         use_attention: bool = True,
         node_names: Optional[Dict[str, Dict[int, str]]] = None,
         data_dict: Optional[Dict[str, Any]] = None,
+        max_paths_total: int = 500,
         max_paths_per_template: int = 100,
     ) -> ExplanationResult:
         """
@@ -442,6 +357,9 @@ class ChemDiseasePredictor:
         Args:
             disease_id: External disease ID (MESH/OMIM format).
             chemical_id: External chemical ID (MESH format).
+            mode: Explainer mode (only "path_attention" is supported).
+            runtime_profile: Runtime profile: {"fast", "balanced", "deep"}.
+            template_set: Named metapath template set.
             use_attention: If True, re-run encode() with attention extraction.
                 This is more expensive but gives better path scoring.
             node_names: Optional name lookup dict for path descriptions.
@@ -449,11 +367,17 @@ class ChemDiseasePredictor:
                 automatically from the metadata DataFrames.
             data_dict: Processed data dictionary (from load_processed_data).
                 Used to build node_names if not provided directly.
+            max_paths_total: Maximum number of scored paths retained.
             max_paths_per_template: Max paths per metapath template.
                 
         Returns:
             ExplanationResult with scored, ranked explanatory paths.
         """
+        if mode != 'path_attention':
+            raise ValueError(
+                'Unsupported explain mode. Only mode="path_attention" is available.'
+            )
+
         # Validate IDs
         if disease_id not in self.disease_to_id:
             raise ValueError(f"Unknown disease ID: {disease_id}")
@@ -473,27 +397,36 @@ class ChemDiseasePredictor:
         # Attention extraction (Tier 2)
         attention_weights = None
         embeddings = self.embeddings  # pre-computed (CPU-detached)
-        if use_attention:
+        if use_attention and mode == 'path_attention':
             embeddings, attention_weights = self._encode_with_attention()
 
-        return _explain_pair(
-            data=self.data,
-            chem_idx=chem_idx,
-            disease_idx=dis_idx,
+        request = ExplainRequest(
             chemical_id=chemical_id,
             disease_id=disease_id,
+            chem_idx=chem_idx,
+            disease_idx=dis_idx,
             chemical_name=pred['chemical_name'],
             disease_name=pred['disease_name'],
             probability=pred['probability'],
             label=pred['label'],
             logit=pred['logit'],
             known=pred.get('known', False),
-            embeddings=embeddings,
-            attention_weights=attention_weights,
             node_names=node_names,
-            adj=self._ensure_adjacency(),
+            mode='path_attention',
+            runtime_profile=runtime_profile,  # type: ignore[arg-type]
+            template_set=template_set,
+            use_attention=use_attention,
+            max_paths_total=max_paths_total,
             max_paths_per_template=max_paths_per_template,
         )
+        context = ExplainContext(
+            data=self.data,
+            embeddings=embeddings,
+            attention_weights=attention_weights,
+            adj=self._ensure_adjacency(),
+            model=self.model,
+        )
+        return run_explain(request, context)
 
 
 FullGraphPredictor = ChemDiseasePredictor

@@ -21,9 +21,17 @@ from pathlib import Path
 from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
 from src.data.graph import build_graph_from_processed
-from src.models.architectures.hgt import HGTPredictor
+from src.models.architectures.hgt import HGTPredictor, infer_hgt_hparams_from_state
 from src.models.inference.full_graph import FullGraphPredictor
-from src.training.trainer import load_checkpoint
+
+
+def _checkpoint_has_extended_types(model_state: dict) -> bool:
+    """Best-effort detection of pathway/GO parameters in checkpoint state."""
+    markers = ("pathway", "go_term")
+    for key in model_state.keys():
+        if any(marker in key for marker in markers):
+            return True
+    return False
 
 
 def main():
@@ -32,18 +40,18 @@ def main():
     # Data arguments
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--checkpoint', type=str, default='/checkpoints/best.pt',
+    parser.add_argument('--checkpoint', type=str, default='./checkpoints/best.pt',
                         help='Path to model checkpoint')
     
-    # Model arguments (should match training)
-    parser.add_argument('--hidden-dim', type=int, default=128,
-                        help='Hidden dimension for embeddings')
-    parser.add_argument('--num-layers', type=int, default=2,
-                        help='Number of message passing layers')
-    parser.add_argument('--num-heads', type=int, default=4,
-                        help='Number of attention heads')
-    parser.add_argument('--dropout', type=float, default=0.2,
-                        help='Dropout probability')
+    # Optional model overrides (checkpoint values are used by default)
+    parser.add_argument('--hidden-dim', type=int, default=None,
+                        help='Override hidden dimension from checkpoint')
+    parser.add_argument('--num-layers', type=int, default=None,
+                        help='Override number of message passing layers from checkpoint')
+    parser.add_argument('--num-heads', type=int, default=None,
+                        help='Override number of attention heads from checkpoint')
+    parser.add_argument('--dropout', type=float, default=None,
+                        help='Override dropout (inference uses 0.0 by default)')
     parser.add_argument('--no-extended', action='store_true',
                         help='Disable extended graph (pathways, GO terms). '
                              'Use if checkpoint was trained without extended entities.')
@@ -97,21 +105,43 @@ def main():
     }
     print(f'Node types: {list(num_nodes_dict.keys())}')
     
+    ckpt = torch.load(args.checkpoint, map_location=device)
+    model_cfg = infer_hgt_hparams_from_state(ckpt['model_state'])
+    ckpt_has_extended = _checkpoint_has_extended_types(ckpt['model_state'])
+
     model = HGTPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=data.metadata(),
-        node_input_dims=node_input_dims,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads,
-        dropout=args.dropout,
-        num_action_types=vocabs['action_type'].height,
-        num_action_subjects=vocabs['action_subject'].height
+        node_input_dims=model_cfg['node_input_dims'] or node_input_dims,
+        hidden_dim=args.hidden_dim or model_cfg['hidden_dim'],
+        num_layers=args.num_layers or model_cfg['num_layers'],
+        num_heads=args.num_heads or model_cfg['num_heads'],
+        dropout=args.dropout if args.dropout is not None else 0.0,
+        num_action_types=model_cfg['num_action_types'] or vocabs['action_type'].height,
+        num_action_subjects=model_cfg['num_action_subjects'] or vocabs['action_subject'].height,
+        num_pheno_action_types=model_cfg['num_pheno_action_types'],
     )
     
     # Load checkpoint
     print(f'Loading checkpoint from {args.checkpoint}...')
-    load_checkpoint(args.checkpoint, model, device=device)
+    try:
+        model.load_state_dict(ckpt['model_state'])
+    except RuntimeError:
+        if ckpt_has_extended and args.no_extended:
+            raise RuntimeError(
+                'Checkpoint appears to be trained with extended graph types '
+                '(pathway/go_term), but --no-extended was passed. '
+                'Remove --no-extended or use a non-extended checkpoint.'
+            ) from None
+        if (not ckpt_has_extended) and (not args.no_extended):
+            raise RuntimeError(
+                'Checkpoint appears to be trained without extended graph types, '
+                'but current run builds the extended graph. Pass --no-extended '
+                'or use an extended checkpoint.'
+            ) from None
+        raise
+    model = model.to(device)
+    model.eval()
     
     # Create predictor
     print('Creating predictor...')
@@ -141,6 +171,7 @@ def main():
             print(f'  Logit: {result["logit"]:.4f}')
         except ValueError as e:
             print(f'Error: {e}')
+            raise SystemExit(2) from e
     
     elif args.disease:
         # Top chemicals for disease
@@ -155,6 +186,7 @@ def main():
             print(results)
         except ValueError as e:
             print(f'Error: {e}')
+            raise SystemExit(2) from e
     
     else:
         # Top diseases for chemical
@@ -169,6 +201,7 @@ def main():
             print(results)
         except ValueError as e:
             print(f'Error: {e}')
+            raise SystemExit(2) from e
 
 
 if __name__ == '__main__':

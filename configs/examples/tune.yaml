@@ -1,17 +1,16 @@
 optimization:
   timeout: 14400
-  n_trials: null
-  quick: false
+  quick: true
 
 study:
-  study_name: hgt_cd_tuning
-  storage: sqlite:///optuna_hgt.db
-  experiment_name: HGT_tuning
+  study_name: EA-HAN_cd_tuning
+  storage: sqlite:///optuna.db
+  experiment_name: EA-HAN_tuning
   output_dir: ./tuning_results
 
 data:
   processed_dir: ./data/processed
 
 training:
-  epochs_per_trial: 25
-  early_stopping: 7
+  epochs_per_trial: 50
+  early_stopping: 5

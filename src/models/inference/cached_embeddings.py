@@ -15,8 +15,17 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 from ..architectures.hgt import HGTPredictor
+from ._shared import (
+    bilinear_score,
+    build_id_mappings,
+    predict_pair_common,
+    rank_chemicals_for_disease_common,
+    rank_diseases_for_chemical_common,
+)
 from ...explainability.paths import AdjacencyIndex, build_adjacency
-from ...explainability.explain import ExplanationResult, explain_pair as _explain_pair, build_node_names
+from ...explainability.explain import build_node_names
+from ...explainability.schema import ExplainContext, ExplainRequest, ExplanationResult
+from ...explainability.service import explain as run_explain
 
 
 class EmbeddingCachePredictor:
@@ -73,35 +82,15 @@ class EmbeddingCachePredictor:
         # Known links (set of (chem_idx, dis_idx) tuples)
         self.known_links = known_links or set()
         
-        # Build ID mappings
-        self.disease_to_id = dict(zip(
-            disease_df['DS_OMIM_MESH_ID'].to_list(),
-            disease_df['DS_ID'].to_list()
-        ))
-        self.id_to_disease = dict(zip(
-            disease_df['DS_ID'].to_list(),
-            disease_df['DS_OMIM_MESH_ID'].to_list()
-        ))
-        self.disease_names = dict(zip(
-            disease_df['DS_OMIM_MESH_ID'].to_list(),
-            disease_df['DS_NAME'].to_list()
-        ))
-        
-        self.chemical_to_id = dict(zip(
-            chemical_df['CHEM_MESH_ID'].to_list(),
-            chemical_df['CHEM_ID'].to_list()
-        ))
-        self.id_to_chemical = dict(zip(
-            chemical_df['CHEM_ID'].to_list(),
-            chemical_df['CHEM_MESH_ID'].to_list()
-        ))
-        self.chemical_names = dict(zip(
-            chemical_df['CHEM_MESH_ID'].to_list(),
-            chemical_df['CHEM_NAME'].to_list()
-        ))
-        
-        self.num_diseases = len(self.disease_to_id)
-        self.num_chemicals = len(self.chemical_to_id)
+        mappings = build_id_mappings(disease_df, chemical_df)
+        self.disease_to_id = mappings['disease_to_id']
+        self.id_to_disease = mappings['id_to_disease']
+        self.disease_names = mappings['disease_names']
+        self.chemical_to_id = mappings['chemical_to_id']
+        self.id_to_chemical = mappings['id_to_chemical']
+        self.chemical_names = mappings['chemical_names']
+        self.num_diseases = mappings['num_diseases']
+        self.num_chemicals = mappings['num_chemicals']
     
     @staticmethod
     def compute_and_save_embeddings(
@@ -242,10 +231,13 @@ class EmbeddingCachePredictor:
         dis_ids: torch.Tensor
     ) -> torch.Tensor:
         """Compute prediction scores for (chemical, disease) pairs."""
-        c = self.z_chem[chem_ids]
-        d = self.z_dis[dis_ids]
-        logits = (c @ self.W_cd * d).sum(dim=-1)
-        return logits
+        return bilinear_score(
+            z_chem=self.z_chem,
+            z_dis=self.z_dis,
+            decoder_weight=self.W_cd,
+            chem_ids=chem_ids,
+            dis_ids=dis_ids,
+        )
     
     def is_known_link(self, chem_idx: int, dis_idx: int) -> bool:
         """Check if a chemical-disease pair is a known association."""
@@ -257,31 +249,18 @@ class EmbeddingCachePredictor:
         chemical_id: str
     ) -> Dict[str, Any]:
         """Predict association between a disease and a chemical."""
-        if disease_id not in self.disease_to_id:
-            raise ValueError(f"Unknown disease ID: {disease_id}")
-        if chemical_id not in self.chemical_to_id:
-            raise ValueError(f"Unknown chemical ID: {chemical_id}")
-        
-        dis_idx = self.disease_to_id[disease_id]
-        chem_idx = self.chemical_to_id[chemical_id]
-        
-        chem_tensor = torch.tensor([chem_idx], device=self.device)
-        dis_tensor = torch.tensor([dis_idx], device=self.device)
-        
-        with torch.no_grad():
-            logit = self._compute_score(chem_tensor, dis_tensor).item()
-            prob = torch.sigmoid(torch.tensor(logit)).item()
-        
-        return {
-            'disease_id': disease_id,
-            'chemical_id': chemical_id,
-            'disease_name': self.disease_names.get(disease_id, 'Unknown'),
-            'chemical_name': self.chemical_names.get(chemical_id, 'Unknown'),
-            'probability': prob,
-            'label': int(prob >= self.threshold),
-            'logit': logit,
-            'known': self.is_known_link(chem_idx, dis_idx)
-        }
+        return predict_pair_common(
+            disease_id=disease_id,
+            chemical_id=chemical_id,
+            disease_to_id=self.disease_to_id,
+            chemical_to_id=self.chemical_to_id,
+            disease_names=self.disease_names,
+            chemical_names=self.chemical_names,
+            device=self.device,
+            threshold=self.threshold,
+            compute_score=self._compute_score,
+            is_known_link=self.is_known_link,
+        )
     
     def predict_chemicals_for_disease(
         self,
@@ -296,43 +275,18 @@ class EmbeddingCachePredictor:
             top_k: Number of results to return
             exclude_known: If True, exclude known associations from results
         """
-        if disease_id not in self.disease_to_id:
-            raise ValueError(f"Unknown disease ID: {disease_id}")
-        
-        dis_idx = self.disease_to_id[disease_id]
-        
-        all_chem_ids = torch.arange(self.num_chemicals, device=self.device)
-        dis_ids = torch.full((self.num_chemicals,), dis_idx, device=self.device)
-        
-        with torch.no_grad():
-            logits = self._compute_score(all_chem_ids, dis_ids)
-            probs = torch.sigmoid(logits)
-        
-        # Sort by probability
-        sorted_indices = torch.argsort(probs, descending=True).cpu().tolist()
-        
-        results = []
-        for idx in sorted_indices:
-            is_known = self.is_known_link(idx, dis_idx)
-            
-            # Skip known if requested
-            if exclude_known and is_known:
-                continue
-            
-            chem_mesh_id = self.id_to_chemical[idx]
-            results.append({
-                'rank': len(results) + 1,
-                'chemical_id': chem_mesh_id,
-                'chemical_name': self.chemical_names.get(chem_mesh_id, 'Unknown'),
-                'probability': probs[idx].item(),
-                'logit': logits[idx].item(),
-                'known': is_known
-            })
-            
-            if len(results) >= top_k:
-                break
-        
-        return pl.DataFrame(results)
+        return rank_chemicals_for_disease_common(
+            disease_id=disease_id,
+            disease_to_id=self.disease_to_id,
+            id_to_chemical=self.id_to_chemical,
+            chemical_names=self.chemical_names,
+            num_chemicals=self.num_chemicals,
+            device=self.device,
+            top_k=top_k,
+            exclude_known=exclude_known,
+            compute_score=self._compute_score,
+            is_known_link=self.is_known_link,
+        )
     
     def predict_diseases_for_chemical(
         self,
@@ -347,43 +301,18 @@ class EmbeddingCachePredictor:
             top_k: Number of results to return
             exclude_known: If True, exclude known associations from results
         """
-        if chemical_id not in self.chemical_to_id:
-            raise ValueError(f"Unknown chemical ID: {chemical_id}")
-        
-        chem_idx = self.chemical_to_id[chemical_id]
-        
-        all_dis_ids = torch.arange(self.num_diseases, device=self.device)
-        chem_ids = torch.full((self.num_diseases,), chem_idx, device=self.device)
-        
-        with torch.no_grad():
-            logits = self._compute_score(chem_ids, all_dis_ids)
-            probs = torch.sigmoid(logits)
-        
-        # Sort by probability
-        sorted_indices = torch.argsort(probs, descending=True).cpu().tolist()
-        
-        results = []
-        for idx in sorted_indices:
-            is_known = self.is_known_link(chem_idx, idx)
-            
-            # Skip known if requested
-            if exclude_known and is_known:
-                continue
-            
-            dis_mesh_id = self.id_to_disease[idx]
-            results.append({
-                'rank': len(results) + 1,
-                'disease_id': dis_mesh_id,
-                'disease_name': self.disease_names.get(dis_mesh_id, 'Unknown'),
-                'probability': probs[idx].item(),
-                'logit': logits[idx].item(),
-                'known': is_known
-            })
-            
-            if len(results) >= top_k:
-                break
-        
-        return pl.DataFrame(results)
+        return rank_diseases_for_chemical_common(
+            chemical_id=chemical_id,
+            chemical_to_id=self.chemical_to_id,
+            id_to_disease=self.id_to_disease,
+            disease_names=self.disease_names,
+            num_diseases=self.num_diseases,
+            device=self.device,
+            top_k=top_k,
+            exclude_known=exclude_known,
+            compute_score=self._compute_score,
+            is_known_link=self.is_known_link,
+        )
 
     # ------------------------------------------------------------------
     # Explainability
@@ -394,10 +323,14 @@ class EmbeddingCachePredictor:
         disease_id: str,
         chemical_id: str,
         *,
+        mode: str = 'path_attention',
+        runtime_profile: str = 'fast',
+        template_set: str = 'default',
         data: Optional[HeteroData] = None,
         node_names: Optional[Dict[str, Dict[int, str]]] = None,
         data_dict: Optional[Dict[str, Any]] = None,
         adj: Optional[AdjacencyIndex] = None,
+        max_paths_total: int = 500,
         max_paths_per_template: int = 100,
     ) -> ExplanationResult:
         """
@@ -412,10 +345,14 @@ class EmbeddingCachePredictor:
         Args:
             disease_id: External disease ID (MESH/OMIM format).
             chemical_id: External chemical ID (MESH format).
+            mode: Explainer mode. Cached mode supports only "path_attention".
+            runtime_profile: Runtime profile: {"fast", "balanced", "deep"}.
+            template_set: Named metapath template set.
             data: HeteroData graph (required for path enumeration).
             node_names: Optional name lookup dict for path descriptions.
             data_dict: Processed data dictionary for auto-building node_names.
             adj: Pre-built adjacency index (reuse for speed).
+            max_paths_total: Maximum number of scored paths retained.
             max_paths_per_template: Max paths per metapath template.
                 
         Returns:
@@ -429,6 +366,11 @@ class EmbeddingCachePredictor:
                 "EmbeddingCachePredictor.explain_prediction() requires the "
                 "'data' argument (HeteroData graph) for path enumeration. "
                 "Load the graph via build_graph_from_processed() and pass it in."
+            )
+        if mode != 'path_attention':
+            raise ValueError(
+                'CachedEmbeddingPredictor supports only mode="path_attention". '
+                'No alternative explain modes are available in cached mode.'
             )
 
         # Validate IDs
@@ -461,24 +403,32 @@ class EmbeddingCachePredictor:
             if z is not None:
                 embeddings[ntype] = z
 
-        return _explain_pair(
-            data=data,
-            chem_idx=chem_idx,
-            disease_idx=dis_idx,
+        request = ExplainRequest(
             chemical_id=chemical_id,
             disease_id=disease_id,
+            chem_idx=chem_idx,
+            disease_idx=dis_idx,
             chemical_name=pred['chemical_name'],
             disease_name=pred['disease_name'],
             probability=pred['probability'],
             label=pred['label'],
             logit=pred['logit'],
             known=pred.get('known', False),
-            embeddings=embeddings,
-            attention_weights=None,  # Not available in cache mode
             node_names=node_names,
-            adj=adj,
+            mode='path_attention',
+            runtime_profile=runtime_profile,  # type: ignore[arg-type]
+            template_set=template_set,
+            use_attention=False,
+            max_paths_total=max_paths_total,
             max_paths_per_template=max_paths_per_template,
         )
+        context = ExplainContext(
+            data=data,
+            embeddings=embeddings,
+            attention_weights=None,
+            adj=adj,
+        )
+        return run_explain(request, context)
 
 
 CachedEmbeddingPredictor = EmbeddingCachePredictor

@@ -32,7 +32,7 @@ from optuna.pruners import MedianPruner
 from optuna.samplers import TPESampler
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
@@ -40,6 +40,8 @@ from src.data.splits import prepare_splits_and_loaders
 from src.models.architectures.hgt import HGTPredictor
 from src.training.trainer import train_for_tuning
 
+CHECKPOINT_ROOT = Path('./checkpoints')
+LEGACY_CHECKPOINT_ROOT = Path('/checkpoints')
 
 # ============================================================================
 # SEARCH SPACE CONFIGURATION
@@ -70,12 +72,71 @@ SEARCH_SPACE_QUICK = {
 }
 
 
+def _sanitize_path_component(value: str) -> str:
+    """Sanitize a path component to keep directory names safe and readable."""
+    cleaned = ''.join(
+        ch if ch.isalnum() or ch in {'-', '_', '.'} else '_'
+        for ch in (value or '').strip()
+    )
+    return cleaned or 'unnamed'
+
+
+def resolve_tuning_checkpoint_base(ckpt_dir_arg: str, study_name: str) -> Path:
+    """
+    Resolve a tuning checkpoint base under ./checkpoints/tuning/<study_name>.
+
+    This keeps tuning artifacts distinct from single-run training checkpoints.
+    """
+    root = CHECKPOINT_ROOT
+    root_abs = root.resolve()
+    legacy_root_abs = LEGACY_CHECKPOINT_ROOT.resolve()
+
+    raw = (ckpt_dir_arg or '').strip()
+    if not raw:
+        rel = Path('tuning')
+    else:
+        requested = Path(raw).expanduser()
+        if requested.is_absolute():
+            requested_abs = requested.resolve()
+            try:
+                rel = requested_abs.relative_to(root_abs)
+            except ValueError:
+                try:
+                    rel = requested_abs.relative_to(legacy_root_abs)
+                except ValueError:
+                    rel = Path(requested.name)
+        else:
+            rel_parts = []
+            for part in requested.parts:
+                if part in {'', '.'}:
+                    continue
+                if part == '..':
+                    continue
+                rel_parts.append(part)
+
+            if rel_parts and rel_parts[0] == root.name:
+                rel_parts = rel_parts[1:]
+            rel = Path(*rel_parts) if rel_parts else Path('tuning')
+
+    rel_str = str(rel).strip()
+    if rel_str in {'', '.'}:
+        rel = Path('tuning')
+
+    if rel.parts and rel.parts[0] != 'tuning':
+        rel = Path('tuning') / rel
+
+    return root / rel / _sanitize_path_component(study_name)
+
+
 def sample_hyperparams(trial: optuna.Trial, search_space: Dict) -> Dict[str, Any]:
     """Sample hyperparameters from the search space."""
     
     hidden_dim = trial.suggest_categorical('hidden_dim', search_space['hidden_dim'])
     num_layers = trial.suggest_int('num_layers', *search_space['num_layers'])
-    num_heads = trial.suggest_categorical('num_heads', search_space['num_heads'])
+    valid_heads = [h for h in search_space['num_heads'] if hidden_dim % int(h) == 0]
+    if not valid_heads:
+        raise ValueError(f'No valid num_heads for hidden_dim={hidden_dim}')
+    num_heads = trial.suggest_categorical('num_heads', valid_heads)
     dropout = trial.suggest_float('dropout', *search_space['dropout'])
 
     batch_size = trial.suggest_categorical('batch_size', search_space['batch_size'])
@@ -111,6 +172,7 @@ def create_objective(
     device,
     search_space: Dict,
     experiment_name: str,
+    tuning_ckpt_base: Path,
     epochs_per_trial: int = 25,
     early_stopping_patience: int = 7,
 ):
@@ -126,11 +188,19 @@ def create_objective(
         params = sample_hyperparams(trial, search_space)
         
         run_name = f"trial_{trial.number:03d}_{datetime.now().strftime('%H%M%S')}"
+        trial_ckpt_dir = tuning_ckpt_base / run_name
+        trial_best_ckpt = trial_ckpt_dir / 'best.pt'
+        trial_last_ckpt = trial_ckpt_dir / 'last.pt'
+        trial.set_user_attr('run_name', run_name)
+        trial.set_user_attr('checkpoint_dir', str(trial_ckpt_dir))
+        trial.set_user_attr('best_checkpoint', str(trial_best_ckpt))
+        trial.set_user_attr('last_checkpoint', str(trial_last_ckpt))
         
         print(f"\n{'='*60}")
         print(f"Trial {trial.number}")
         print(f"{'='*60}")
         print(f"Parameters: {json.dumps({k: v for k, v in params.items() if k != 'num_neighbours_idx'}, indent=2)}")
+        print(f"Checkpoint dir: {trial_ckpt_dir}")
         
         try:
             arts = prepare_splits_and_loaders(
@@ -182,6 +252,7 @@ def create_objective(
                 num_neg_train=params['num_neg_train'],
                 num_neg_eval=20,
                 amp=True,
+                ckpt_dir=str(trial_ckpt_dir),
                 monitor='auprc',
                 patience=5,
                 factor=0.5,
@@ -200,6 +271,11 @@ def create_objective(
                 gc.collect()
                 raise optuna.TrialPruned()
             raise
+        except ValueError as e:
+            if 'divisible by heads' in str(e):
+                print(f'Trial {trial.number} invalid config ({e}) - pruning')
+                raise optuna.TrialPruned()
+            raise
         
         finally:
             torch.cuda.empty_cache()
@@ -208,7 +284,7 @@ def create_objective(
     return objective
 
 
-def print_study_summary(study: optuna.Study):
+def print_study_summary(study: optuna.Study, num_neighbours_options: List[List[int]]):
     """Print a summary of the optimization study."""
     
     print("\n" + "="*60)
@@ -237,30 +313,29 @@ def print_study_summary(study: optuna.Study):
         
         # Show num_neighbours from the index
         if 'num_neighbours_idx' in study.best_params:
-            idx = study.best_params['num_neighbours_idx']
-            options = SEARCH_SPACE_FULL['num_neighbours_options']
-            if idx < len(options):
-                print(f"  num_neighbours: {options[idx]}")
+            idx = int(study.best_params['num_neighbours_idx'])
+            if 0 <= idx < len(num_neighbours_options):
+                print(f"  num_neighbours: {num_neighbours_options[idx]}")
     else:
         print("\nNo completed trials yet.")
     
     print("="*60)
 
 
-def save_results(study: optuna.Study, output_dir: Path):
+def save_results(study: optuna.Study, output_dir: Path, num_neighbours_options: List[List[int]]):
     """Save study results to files."""
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
     if len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]) > 0:
         best_params = dict(study.best_params)
+        best_trial_attrs = dict(study.best_trial.user_attrs)
         
         # Convert num_neighbours_idx to actual values
         if 'num_neighbours_idx' in best_params:
             idx = best_params.pop('num_neighbours_idx')
-            options = SEARCH_SPACE_FULL['num_neighbours_options']
-            if idx < len(options):
-                best_params['num_neighbours'] = options[idx]
+            if 0 <= idx < len(num_neighbours_options):
+                best_params['num_neighbours'] = num_neighbours_options[idx]
         
         results = {
             'best_value': study.best_value,
@@ -268,6 +343,9 @@ def save_results(study: optuna.Study, output_dir: Path):
             'best_params': best_params,
             'total_trials': len(study.trials),
             'completed_trials': len([t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]),
+            'best_checkpoint': best_trial_attrs.get('best_checkpoint'),
+            'best_trial_checkpoint_dir': best_trial_attrs.get('checkpoint_dir'),
+            'best_trial_run_name': best_trial_attrs.get('run_name'),
         }
         
         with open(output_dir / 'best_params.json', 'w') as f:
@@ -357,6 +435,8 @@ def main():
     # Output settings
     parser.add_argument('--output-dir', type=str, default='./tuning_results',
                         help='Directory to save results')
+    parser.add_argument('--ckpt-dir', type=str, default='./checkpoints/tuning',
+                        help='Tuning checkpoint base (grouped by study and trial under ./checkpoints/tuning)')
     
     args, _ = parse_args_with_config(parser)
     
@@ -376,6 +456,8 @@ def main():
     print(f"Study name: {args.study_name}")
     print(f"Storage: {args.storage}")
     print(f"MLflow experiment: {args.experiment_name}")
+    tuning_ckpt_base = resolve_tuning_checkpoint_base(args.ckpt_dir, args.study_name)
+    print(f"Tuning checkpoints: {tuning_ckpt_base}")
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
@@ -413,7 +495,11 @@ def main():
     # Check if resuming
     if len(study.trials) > 0:
         print(f"\nResuming study with {len(study.trials)} existing trials")
-        print(f"Current best: {study.best_value:.4f}")
+        completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+        if completed:
+            print(f"Current best: {study.best_value:.4f}")
+        else:
+            print("No completed trials yet.")
     
     objective = create_objective(
         data=data,
@@ -421,6 +507,7 @@ def main():
         device=device,
         search_space=search_space,
         experiment_name=args.experiment_name,
+        tuning_ckpt_base=tuning_ckpt_base,
         epochs_per_trial=args.epochs_per_trial,
         early_stopping_patience=args.early_stopping
     )
@@ -439,8 +526,8 @@ def main():
     except KeyboardInterrupt:
         print("\n\nOptimization interrupted by user")
     
-    print_study_summary(study)
-    save_results(study, Path(args.output_dir))
+    print_study_summary(study, search_space['num_neighbours_options'])
+    save_results(study, Path(args.output_dir), search_space['num_neighbours_options'])
     
     print(f"\nTo visualize results, you can use:")
     print(f"  optuna-dashboard {args.storage}")

@@ -1,0 +1,22 @@
+paths:
+  processed_dir: ./data/processed
+  checkpoint: ./checkpoints/best.pt
+
+query:
+  disease: MESH:D014202
+  chemical: C006901
+
+graph:
+  cached: false
+  no_extended: false
+
+explain:
+  mode: path_attention
+  runtime_profile: fast
+  template_set: default
+  no_attention: false
+  max_paths: 10
+  max_paths_total: 500
+  max_paths_per_template: 100
+  threshold: 0.5
+  output_format: text

@@ -56,14 +56,14 @@ def main():
     if not embeddings_path.exists():
         print(f'Error: Embeddings directory not found: {args.embeddings_dir}')
         print('Run scripts/cache_embeddings_chunked.py first to generate embeddings.')
-        return
+        raise SystemExit(2)
     
     required_files = ['chemical_embeddings.npy', 'disease_embeddings.npy', 'W_cd.pt']
     missing = [f for f in required_files if not (embeddings_path / f).exists()]
     if missing:
         print(f'Error: Missing embedding files: {missing}')
         print('Run scripts/cache_embeddings_chunked.py first to generate embeddings.')
-        return
+        raise SystemExit(2)
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device: {device}')
@@ -97,6 +97,7 @@ def main():
             print(f'  Logit: {result["logit"]:.4f}')
         except ValueError as e:
             print(f'Error: {e}')
+            raise SystemExit(2) from e
     
     elif args.disease:
         print(f'\nTop {args.top_k} chemicals for disease: {args.disease}')
@@ -112,6 +113,7 @@ def main():
             print(results)
         except ValueError as e:
             print(f'Error: {e}')
+            raise SystemExit(2) from e
     
     else:
         print(f'\nTop {args.top_k} diseases for chemical: {args.chemical}')
@@ -127,6 +129,7 @@ def main():
             print(results)
         except ValueError as e:
             print(f'Error: {e}')
+            raise SystemExit(2) from e
 
 
 if __name__ == '__main__':

@@ -1,19 +1,11 @@
 paths:
   processed_dir: ./data/processed
-  checkpoint: /checkpoints/best.pt
+  checkpoint: ./checkpoints/best.pt
 
 graph:
   no_extended: false
 
-model:
-  hidden_dim: 128
-  num_layers: 2
-  num_heads: 4
-  dropout: 0.2
-
 query:
   disease: MESH:D014202
   chemical: C006901
-  top_k: 10
-  include_known: false
   threshold: 0.5

@@ -95,6 +95,7 @@ def build_hetero_data(
     cg: pl.DataFrame,
     dg: pl.DataFrame,
     ppi: pl.DataFrame,
+    ppi_directed: Optional[pl.DataFrame] = None,
     pathway_nodes: Optional[pl.DataFrame] = None,
     go_term_nodes: Optional[pl.DataFrame] = None,
     gene_pathway: Optional[pl.DataFrame] = None,
@@ -116,6 +117,7 @@ def build_hetero_data(
         cg: Chemical-Gene edges DataFrame with ACTION_TYPE, ACTION_SUBJECT.
         dg: Disease-Gene edges DataFrame.
         ppi: PPI edges DataFrame (undirected).
+        ppi_directed: Optional PPI edges containing both directions.
         pathway_nodes: Pathway nodes DataFrame (optional).
         go_term_nodes: GO term nodes DataFrame (optional).
         gene_pathway: Gene-Pathway edges DataFrame (optional).
@@ -199,9 +201,12 @@ def build_hetero_data(
         dg_attr = dg.select(dg_attr_cols).to_numpy().astype(np.float32)
         data['disease', 'targets', 'gene'].edge_attr = torch.from_numpy(dg_attr)
     
-    # Gene-Gene (PPI) edges
+    # Gene-Gene (PPI) edges.
+    # Prefer directed PPI edges when available to avoid storing a redundant
+    # reverse edge type for this symmetric relation.
+    ppi_edges = ppi_directed if ppi_directed is not None and ppi_directed.height > 0 else ppi
     data['gene', 'interacts_with', 'gene'].edge_index = torch.from_numpy(
-        ppi.select(['GENE_ID_1', 'GENE_ID_2']).to_numpy().T.astype(np.int64)
+        ppi_edges.select(['GENE_ID_1', 'GENE_ID_2']).to_numpy().T.astype(np.int64)
     ).long()
 
     # PATHWAY EDGES
@@ -285,9 +290,11 @@ def build_hetero_data(
             data['gene', 'rev_targets', 'disease'].edge_attr = \
                 data['disease', 'targets', 'gene'].edge_attr.clone()
         
-        data['gene', 'rev_interacts_with', 'gene'].edge_index = torch.flip(
-            data['gene', 'interacts_with', 'gene'].edge_index, dims=[0]
-        )
+        # Keep gene-gene reverse edge only when inputs are undirected.
+        if ppi_directed is None or ppi_directed.height == 0:
+            data['gene', 'rev_interacts_with', 'gene'].edge_index = torch.flip(
+                data['gene', 'interacts_with', 'gene'].edge_index, dims=[0]
+            )
         
         # Pathway reverse edges
         if ('gene', 'participates_in', 'pathway') in data.edge_types:
@@ -394,6 +401,7 @@ def build_graph_from_processed(
         cg=data_dict['chem_gene'],
         dg=data_dict['disease_gene'],
         ppi=data_dict['ppi'],
+        ppi_directed=data_dict.get('ppi_directed'),
         add_reverse_edges=add_reverse_edges,
         **extended_args
     )

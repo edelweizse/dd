@@ -1,0 +1,14 @@
+protocol:
+  version: 1
+  num_neg_eval: 20
+  eval_hard_negative_ratio: 0.0
+  require_split_artifact: true
+  required_split_metadata_keys:
+    - seed
+    - val_ratio
+    - test_ratio
+    - split_strategy
+    - stratify_bins
+  allowed_split_strategy:
+    - stratified
+

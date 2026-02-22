@@ -13,10 +13,10 @@ Extended to support:
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch_geometric.data import HeteroData
-from torch_geometric.utils import softmax
 from typing import Dict, List, Tuple, Optional, Union
+
+from ._shared import encode_residual_stack, hetero_conv_forward, init_node_states
 
 
 class EdgeAttrHeteroConv(nn.Module):
@@ -40,7 +40,7 @@ class EdgeAttrHeteroConv(nn.Module):
         num_action_subjects: int = 0,
         num_pheno_action_types: int = 3,  # increases, decreases, affects
         edge_attr_dim: int = 32,
-        continuous_attr_dims: Optional[Dict[str, int]] = None,
+        continuous_attr_dims: Optional[Dict[Tuple[str, str, str], int]] = None,
         heads: int = 4,
         dropout: float = 0.2
     ):
@@ -117,11 +117,8 @@ class EdgeAttrHeteroConv(nn.Module):
         self.lin_edge_cat = nn.ModuleDict()  # For categorical edge attributes
         self.lin_edge_cont = nn.ModuleDict()  # For continuous edge attributes
         
-        self._edge_keys = []
-        
         for edge_type in edge_types:
             edge_key = '__'.join(edge_type)
-            self._edge_keys.append(edge_key)
             
             self.lin_src[edge_key] = nn.Linear(in_channels, out_channels)
             self.lin_dst[edge_key] = nn.Linear(in_channels, out_channels)
@@ -163,6 +160,45 @@ class EdgeAttrHeteroConv(nn.Module):
     def _get_attn(self, edge_key: str) -> torch.Tensor:
         """Get attention parameter for edge type."""
         return getattr(self, f'attn_{edge_key}')
+
+    def _edge_gate(
+        self,
+        edge_type: Tuple[str, str, str],
+        edge_key: str,
+        edge_attr: Optional[torch.Tensor],
+    ) -> Optional[torch.Tensor]:
+        """Compute an optional gate vector from edge attributes."""
+        if edge_attr is None:
+            return None
+
+        # Categorical: chem-gene action type/subject
+        if (
+            edge_type in self.chem_gene_attr_types
+            and self.use_chem_gene_attr
+            and edge_key in self.lin_edge_cat
+        ):
+            # edge_attr: [E, 2] - (action_type_id, action_subject_id)
+            type_emb = self.action_type_emb(edge_attr[:, 0].long())
+            subj_emb = self.action_subject_emb(edge_attr[:, 1].long())
+            edge_emb = torch.cat([type_emb, subj_emb], dim=-1)
+            return self.lin_edge_cat[edge_key](edge_emb)
+
+        # Categorical: phenotype action type
+        if (
+            edge_type in self.pheno_action_attr_types
+            and self.use_pheno_action_attr
+            and edge_key in self.lin_edge_cat
+        ):
+            # edge_attr: [E, 1] - (pheno_action_type)
+            edge_emb = self.pheno_action_emb(edge_attr.view(-1).long())
+            return self.lin_edge_cat[edge_key](edge_emb)
+
+        # Continuous: enrichment statistics, etc.
+        if edge_type in self.continuous_attr_types and edge_key in self.lin_edge_cont:
+            # edge_attr: [E, attr_dim]
+            return self.lin_edge_cont[edge_key](edge_attr.float())
+
+        return None
     
     def forward(
         self,
@@ -187,101 +223,21 @@ class EdgeAttrHeteroConv(nn.Module):
             If return_attention is True: Tuple of (updated_features, attention_dict)
                 where attention_dict maps edge_type -> [E] mean attention weights.
         """
-        out_dict = {ntype: [] for ntype in x_dict.keys()}
-        attn_dict: Dict[Tuple, torch.Tensor] = {}
-        
-        for edge_type, edge_index in edge_index_dict.items():
-            src_type, rel_type, dst_type = edge_type
-            edge_key = '__'.join(edge_type)
-            
-            if edge_key not in self.lin_src:
-                continue  # Skip unknown edge types
-            
-            # Skip if no edges
-            if edge_index.numel() == 0:
-                continue
-            
-            src_x = x_dict[src_type]
-            dst_x = x_dict[dst_type]
-            
-            src_idx, dst_idx = edge_index[0], edge_index[1]
-            
-            # Transform source and destination features
-            msg_src = self.lin_src[edge_key](src_x[src_idx])  # [E, out_channels]
-            msg_dst = self.lin_dst[edge_key](dst_x[dst_idx])  # [E, out_channels]
-            
-            # Compute message
-            msg = msg_src + msg_dst
-            
-            # Apply edge attribute gating
-            if edge_attr_dict is not None and edge_type in edge_attr_dict:
-                edge_attr = edge_attr_dict[edge_type]
-                
-                # Categorical: chem-gene action type/subject
-                if (edge_type in self.chem_gene_attr_types and 
-                    self.use_chem_gene_attr and
-                    edge_key in self.lin_edge_cat):
-                    # edge_attr: [E, 2] - (action_type_id, action_subject_id)
-                    type_emb = self.action_type_emb(edge_attr[:, 0].long())
-                    subj_emb = self.action_subject_emb(edge_attr[:, 1].long())
-                    edge_emb = torch.cat([type_emb, subj_emb], dim=-1)
-                    gate = self.lin_edge_cat[edge_key](edge_emb)
-                    msg = msg * gate
-                
-                # Categorical: phenotype action type
-                elif (edge_type in self.pheno_action_attr_types and
-                      self.use_pheno_action_attr and
-                      edge_key in self.lin_edge_cat):
-                    # edge_attr: [E, 1] - (pheno_action_type)
-                    edge_emb = self.pheno_action_emb(edge_attr.view(-1).long())
-                    gate = self.lin_edge_cat[edge_key](edge_emb)
-                    msg = msg * gate
-                
-                # Continuous: enrichment statistics, etc.
-                elif edge_type in self.continuous_attr_types and edge_key in self.lin_edge_cont:
-                    # edge_attr: [E, attr_dim]
-                    gate = self.lin_edge_cont[edge_key](edge_attr.float())
-                    msg = msg * gate
-            
-            num_dst = dst_x.size(0)
-            head_dim = self.out_channels // self.heads
-            msg_heads = msg.view(-1, self.heads, head_dim)
-            src_heads = msg_src.view(-1, self.heads, head_dim)
-            dst_heads = msg_dst.view(-1, self.heads, head_dim)
-
-            # Dynamic attention logits (query-key style) + learned per-edge-type bias term.
-            attn_param = self._get_attn(edge_key)
-            attn_logits = (src_heads * dst_heads).sum(dim=-1) / (head_dim ** 0.5)
-            attn_logits = attn_logits + (msg_heads * attn_param).sum(dim=-1)
-
-            # Normalize across incoming neighbors for each destination node and head.
-            attn_weights = softmax(attn_logits, dst_idx, num_nodes=num_dst)
-            attn_weights = F.dropout(attn_weights, p=self.dropout, training=self.training)
-            msg = (msg_heads * attn_weights.unsqueeze(-1)).reshape(-1, self.out_channels)
-
-            # Store attention weights (head-averaged) if requested
-            if return_attention:
-                # attn_weights: [E, num_heads] -> mean over heads -> [E]
-                attn_dict[edge_type] = attn_weights.mean(dim=-1).detach()
-
-            # Aggregate messages to destination nodes
-            aggr = torch.zeros(num_dst, self.out_channels, device=msg.device, dtype=msg.dtype)
-            aggr.scatter_add_(0, dst_idx.unsqueeze(-1).expand_as(msg), msg)
-            
-            out_dict[dst_type].append(aggr)
-        
-        # Combine messages from different edge types
-        result = {}
-        for ntype, msgs in out_dict.items():
-            if len(msgs) == 0:
-                result[ntype] = x_dict[ntype]  # No incoming edges, keep original
-            else:
-                combined = torch.stack(msgs, dim=0).mean(dim=0)  # Average over edge types
-                result[ntype] = self.lin_out[ntype](combined)
-        
-        if return_attention:
-            return result, attn_dict
-        return result
+        return hetero_conv_forward(
+            x_dict=x_dict,
+            edge_index_dict=edge_index_dict,
+            edge_attr_dict=edge_attr_dict,
+            lin_src=self.lin_src,
+            lin_dst=self.lin_dst,
+            lin_out=self.lin_out,
+            out_channels=self.out_channels,
+            heads=self.heads,
+            dropout=self.dropout,
+            training=self.training,
+            get_attn=self._get_attn,
+            edge_gate=self._edge_gate,
+            return_attention=return_attention,
+        )
 
 
 class HGTPredictor(nn.Module):
@@ -392,41 +348,20 @@ class HGTPredictor(nn.Module):
             If return_attention is True: Tuple of (embeddings, attention_list)
                 where attention_list[i] is a dict mapping edge_type -> [E] for layer i.
         """
-        h = self.initial_node_states(x_dict)
-        all_attn: List[Dict[Tuple, torch.Tensor]] = []
-        
-        # Message passing layers
-        for conv, norm_dict in zip(self.convs, self.norms):
-            if return_attention:
-                h_new, layer_attn = conv(h, edge_index_dict, edge_attr_dict,
-                                         return_attention=True)
-                all_attn.append(layer_attn)
-            else:
-                h_new = conv(h, edge_index_dict, edge_attr_dict)
-            # Residual + LayerNorm + Dropout + Activation
-            h = {
-                k: F.gelu(norm_dict[k](F.dropout(h_new[k], p=self.dropout, training=self.training) + h[k]))
-                for k in h.keys()
-                if k in norm_dict  # Only process node types we have norms for
-            }
-        
-        if return_attention:
-            return h, all_attn
-        return h
+        return encode_residual_stack(
+            h=self.initial_node_states(x_dict),
+            convs=self.convs,
+            norms=self.norms,
+            edge_index_dict=edge_index_dict,
+            edge_attr_dict=edge_attr_dict,
+            dropout=self.dropout,
+            training=self.training,
+            return_attention=return_attention,
+        )
 
     def initial_node_states(self, x_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Initialize per-node-type hidden states from inputs."""
-        h: Dict[str, torch.Tensor] = {}
-        for ntype, x in x_dict.items():
-            if ntype in self.node_proj:
-                x_float = x.float()
-                if x_float.dim() == 1:
-                    x_float = x_float.unsqueeze(-1)
-                h[ntype] = self.node_proj[ntype](x_float)
-            elif ntype in self.node_emb:
-                node_ids = x.view(-1).long()
-                h[ntype] = self.node_emb[ntype](node_ids)
-        return h
+        return init_node_states(x_dict, self.node_proj, self.node_emb)
     
     def decode(
         self,
@@ -478,6 +413,44 @@ class HGTPredictor(nn.Module):
         pos_logits = self.decode(z['chemical'], z['disease'], pos_edge_idx)
         neg_logits = self.decode(z['chemical'], z['disease'], neg_edge_idx)
         return pos_logits, neg_logits
+
+
+def infer_hgt_hparams_from_state(state: Dict[str, torch.Tensor]) -> Dict[str, Union[int, Dict[str, int]]]:
+    """Infer HGTPredictor init kwargs from a checkpoint ``model_state``."""
+    attn_keys = [k for k in state if k.startswith('convs.') and '.attn_' in k]
+    if not attn_keys:
+        raise ValueError('Checkpoint state has no HGT attention tensors (convs.*.attn_*).')
+
+    layer_indices = sorted({int(k.split('.')[1]) for k in attn_keys})
+    first_attn = state[attn_keys[0]]
+    num_heads = int(first_attn.size(1))
+    hidden_dim = int(first_attn.size(1) * first_attn.size(2))
+
+    def _infer_cardinality(base_key: str) -> int:
+        candidates = [base_key] + [f'convs.{i}.{base_key}' for i in layer_indices]
+        sizes = [int(state[k].size(0)) for k in candidates if k in state]
+        return max(sizes) if sizes else 0
+
+    num_action_types = _infer_cardinality('action_type_emb.weight')
+    num_action_subjects = _infer_cardinality('action_subject_emb.weight')
+    num_pheno_action_types = _infer_cardinality('pheno_action_emb.weight')
+
+    node_input_dims: Dict[str, int] = {}
+    for key, value in state.items():
+        if key.startswith('node_proj.') and key.endswith('.0.weight'):
+            # key pattern: node_proj.<ntype>.0.weight, shape [hidden_dim, in_dim]
+            ntype = key.split('.')[1]
+            node_input_dims[ntype] = int(value.size(1))
+
+    return {
+        'hidden_dim': hidden_dim,
+        'num_layers': max(layer_indices) + 1,
+        'num_heads': num_heads,
+        'num_action_types': num_action_types,
+        'num_action_subjects': num_action_subjects,
+        'num_pheno_action_types': num_pheno_action_types,
+        'node_input_dims': node_input_dims,
+    }
 
 
 def create_model_from_data(
@@ -534,5 +507,6 @@ __all__ = [
     'EdgeAttrHeteroConv',
     'HGTPredictor',
     'HGTMainModel',
+    'infer_hgt_hparams_from_state',
     'create_model_from_data',
 ]

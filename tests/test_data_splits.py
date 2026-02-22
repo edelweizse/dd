@@ -138,6 +138,7 @@ def test_split_artifact_roundtrip_and_compatibility(tmp_path):
 
     assert meta["seed"] == 7
     assert meta["split_strategy"] == "random"
+    assert isinstance(meta.get("cd_edge_set_sha256"), str)
     assert torch.equal(split.train_pos, loaded_split.train_pos)
 
 
@@ -169,6 +170,24 @@ def test_validate_split_artifact_detects_relation_mismatch():
     }
     with pytest.raises(ValueError):
         validate_split_artifact_compatibility(split, metadata, data)
+
+
+def test_validate_split_artifact_detects_cd_edge_set_mismatch():
+    data = _tiny_full_graph()
+    cd_all = data["chemical", "associated_with", "disease"].edge_index
+    split = split_cd(cd_all, val_ratio=0.2, test_ratio=0.2, seed=9, stratify=False)
+    metadata = {
+        "num_chemical_nodes": int(data["chemical"].num_nodes),
+        "num_disease_nodes": int(data["disease"].num_nodes),
+        "num_cd_edges": int(cd_all.size(1)),
+        "cd_relation": ["chemical", "associated_with", "disease"],
+    }
+    bad_data = data.clone()
+    bad_cd = bad_data["chemical", "associated_with", "disease"].edge_index.clone()
+    bad_cd[:, 0] = torch.tensor([5, 3], dtype=torch.long)
+    bad_data["chemical", "associated_with", "disease"].edge_index = bad_cd
+    with pytest.raises(ValueError):
+        validate_split_artifact_compatibility(split, metadata, bad_data)
 
 
 def test_negative_sampling_is_deterministic_and_avoids_known_positives():

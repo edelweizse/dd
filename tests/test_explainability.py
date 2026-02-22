@@ -200,6 +200,24 @@ class TestEnumeratePaths:
         counts = Counter(p.template_name for p in paths)
         assert all(c <= 1 for c in counts.values())
 
+    def test_custom_templates_work_without_prebuilt_adjacency(self, synthetic_graph):
+        templates = {
+            'only_gene_bridge': [
+                ('chemical', 'affects', 'gene'),
+                ('gene', 'rev_targets', 'disease'),
+            ]
+        }
+        paths = enumerate_paths(
+            synthetic_graph,
+            chem_idx=0,
+            disease_idx=0,
+            adj=None,
+            templates=templates,
+            max_paths_per_template=10,
+        )
+        assert len(paths) == 1
+        assert paths[0].template_name == 'only_gene_bridge'
+
 
 # ---------------------------------------------------------------------------
 # Tests: Scoring helpers
@@ -273,6 +291,13 @@ class TestScorePaths:
         scored = score_paths(paths, embeddings=mock_embeddings, attention_weights=mock_attention)
         for sp in scored:
             assert abs(sp.attention_score - 0.5) < 1e-5
+
+    def test_empty_attention_list_treated_as_no_attention(self, synthetic_graph, mock_embeddings):
+        adj = build_adjacency(synthetic_graph)
+        paths = enumerate_paths(synthetic_graph, chem_idx=0, disease_idx=0, adj=adj)
+        scored = score_paths(paths, embeddings=mock_embeddings, attention_weights=[])
+        for sp in scored:
+            assert sp.attention_score == 1.0
 
     def test_node_names_in_description(self, synthetic_graph, mock_embeddings):
         adj = build_adjacency(synthetic_graph)

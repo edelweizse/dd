@@ -132,6 +132,36 @@ def test_build_hetero_data_with_extended_nodes_and_attrs():
     assert hasattr(data["go_term"], "ontology_type")
 
 
+def test_build_hetero_data_uses_directed_ppi_without_rev_interacts():
+    cnodes, dnodes, gnodes, cd, cg, dg, ppi = _base_graph_frames()
+    ppi_directed = pl.concat(
+        [
+            ppi.select(["GENE_ID_1", "GENE_ID_2"]),
+            ppi.select(
+                pl.col("GENE_ID_2").alias("GENE_ID_1"),
+                pl.col("GENE_ID_1").alias("GENE_ID_2"),
+            ),
+        ],
+        how="vertical",
+    )
+
+    data, _ = build_hetero_data(
+        cnodes=cnodes,
+        dnodes=dnodes,
+        gnodes=gnodes,
+        cd=cd,
+        cg=cg,
+        dg=dg,
+        ppi=ppi,
+        ppi_directed=ppi_directed,
+        add_reverse_edges=True,
+    )
+
+    assert ("gene", "rev_interacts_with", "gene") not in data.edge_types
+    gg = {tuple(x) for x in data["gene", "interacts_with", "gene"].edge_index.t().tolist()}
+    assert gg == {(0, 1), (1, 0)}
+
+
 def test_get_graph_summary_has_totals():
     cnodes, dnodes, gnodes, cd, cg, dg, ppi = _base_graph_frames()
     data, _ = build_hetero_data(
@@ -160,7 +190,17 @@ def test_build_graph_from_processed_loads_and_writes_vocab_csv(tmp_path):
     cg.with_row_index("CHEM_GENE_IDX").write_parquet(tmp_path / "chem_gene_edges.parquet")
     dg.with_row_index("GENE_DS_IDX").write_parquet(tmp_path / "disease_gene_edges.parquet")
     ppi.with_row_index("PPI_IDX").write_parquet(tmp_path / "ppi_edges.parquet")
-    ppi.with_row_index("PPI_DIR_IDX").write_parquet(tmp_path / "ppi_directed_edges.parquet")
+    ppi_directed = pl.concat(
+        [
+            ppi.select(["GENE_ID_1", "GENE_ID_2"]),
+            ppi.select(
+                pl.col("GENE_ID_2").alias("GENE_ID_1"),
+                pl.col("GENE_ID_1").alias("GENE_ID_2"),
+            ),
+        ],
+        how="vertical",
+    )
+    ppi_directed.with_row_index("PPI_DIR_IDX").write_parquet(tmp_path / "ppi_directed_edges.parquet")
 
     data, vocabs = build_graph_from_processed(
         processed_data_dir=str(tmp_path),
@@ -177,3 +217,4 @@ def test_build_graph_from_processed_loads_and_writes_vocab_csv(tmp_path):
         data["disease", "rev_associated_with", "chemical"].edge_index,
         torch.flip(data["chemical", "associated_with", "disease"].edge_index, dims=[0]),
     )
+    assert ("gene", "rev_interacts_with", "gene") not in data.edge_types

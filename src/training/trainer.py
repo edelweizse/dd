@@ -173,6 +173,7 @@ def train(
     scaler = torch.amp.GradScaler(enabled=(amp and device.type == 'cuda'))
     split_seed = int((arts.split_metadata or {}).get('seed', 42))
     train_neg_generator = _seeded_generator(split_seed + 101, device)
+    train_known_pos = getattr(arts, 'known_pos', arts.known_pos_test)
     val_sampling_seed = split_seed + 202
     test_sampling_seed = split_seed + 303
     
@@ -221,7 +222,7 @@ def train(
                 neg_edge = negative_sample_cd_batch_local(
                     batch_data=batch,
                     pos_edge_index_local=pos_edge,
-                    known_pos=arts.known_pos_train,
+                    known_pos=train_known_pos,
                     num_neg_per_pos=num_neg_train,
                     hard_negative_ratio=hard_negative_ratio,
                     degree_alpha=degree_alpha,
@@ -364,6 +365,7 @@ def train_for_tuning(
     num_neg_eval: int = 20,
     ks: Tuple[int, ...] = (10,),
     amp: bool = True,
+    ckpt_dir: Optional[str] = None,
     monitor: str = 'auprc',
     patience: int = 5,
     factor: float = 0.5,
@@ -399,6 +401,8 @@ def train_for_tuning(
         num_neg_eval: Number of negatives per positive during evaluation.
         ks: Tuple of K values for Hits@K metrics.
         amp: Whether to use automatic mixed precision.
+        ckpt_dir: Optional checkpoint directory for this trial.
+            When set, writes ``last.pt`` every epoch and ``best.pt`` on improvement.
         monitor: Metric to monitor for model selection.
         patience: LR scheduler patience.
         factor: LR scheduler reduction factor.
@@ -437,11 +441,14 @@ def train_for_tuning(
     scaler = torch.amp.GradScaler(enabled=(amp and device.type == 'cuda'))
     split_seed = int((arts.split_metadata or {}).get('seed', 42))
     train_neg_generator = _seeded_generator(split_seed + 404, device)
+    train_known_pos = getattr(arts, 'known_pos', arts.known_pos_test)
     val_sampling_seed = split_seed + 505
     
     best_val = -math.inf
     best_epoch = -1
     epochs_without_improvement = 0
+    last_path = os.path.join(ckpt_dir, 'last.pt') if ckpt_dir else None
+    best_path = os.path.join(ckpt_dir, 'best.pt') if ckpt_dir else None
     
     mlflow.set_experiment(experiment_name)
     
@@ -466,7 +473,8 @@ def train_for_tuning(
             'degree_alpha': degree_alpha,
             'eval_hard_negative_ratio': eval_hard_negative_ratio,
             'trial_number': trial.number,
-            'batch_size': getattr(arts.train_loader, 'batch_size', None)
+            'batch_size': getattr(arts.train_loader, 'batch_size', None),
+            'ckpt_dir': ckpt_dir,
         }
         
         # Add sampled hyperparameters if provided
@@ -491,7 +499,7 @@ def train_for_tuning(
                 neg_edge = negative_sample_cd_batch_local(
                     batch_data=batch,
                     pos_edge_index_local=pos_edge,
-                    known_pos=arts.known_pos_train,
+                    known_pos=train_known_pos,
                     num_neg_per_pos=num_neg_train,
                     hard_negative_ratio=hard_negative_ratio,
                     degree_alpha=degree_alpha,
@@ -564,6 +572,9 @@ def train_for_tuning(
             }
             log.update({f'val_{k}': float(v) for k, v in val_metrics.items()})
             mlflow.log_metrics(log, step=epoch)
+
+            if last_path is not None:
+                save_checkpoint(last_path, model, optimizer, scheduler, epoch, best_val)
             
             # Track best score
             score = float(val_metrics[monitor])
@@ -571,6 +582,9 @@ def train_for_tuning(
                 best_val = score
                 best_epoch = epoch
                 epochs_without_improvement = 0
+                if best_path is not None:
+                    save_checkpoint(best_path, model, optimizer, scheduler, epoch, best_val)
+                    mlflow.log_artifact(best_path)
             else:
                 epochs_without_improvement += 1
             

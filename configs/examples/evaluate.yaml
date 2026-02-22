@@ -1,12 +1,13 @@
 paths:
-  checkpoint: ./checkpoints/20260218_092658_646548/best.pt
+  checkpoint: ./checkpoints/best.pt
   processed_dir: ./data/processed
-  output_dir: ./evalv2
+  output_dir: ./evaluation_results
 
 evaluation:
-  num_neg_eval: 50
-  batch_size: 1024
+  split_artifact_path: ./splits/cd_split_seed42.pt
   split: test
+  num_neg_eval: 5
+  batch_size: 1024
   no_tsne: false
   seed: 42
   val_ratio: 0.1
@@ -16,4 +17,8 @@ evaluation:
   no_enforce_train_node_coverage: false
   eval_hard_negative_ratio: 0.0
   degree_alpha: 0.75
-  split_artifact_path: null
+
+protocol:
+  protocol_config: ./configs/examples/eval_protocol.yaml
+  protocol_strict: true
+  allow_noncomparable: true

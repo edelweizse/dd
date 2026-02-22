@@ -2,33 +2,26 @@ data:
   processed_dir: ./data/processed
 
 model:
-  hidden_dim: 128
-  num_layers: 2
-  num_heads: 4
-  dropout: 0.2
+  hidden_dim: 192
+  num_layers: 3
+  num_heads: 6
+  dropout: 0.05
 
 training:
-  epochs: 50
-  batch_size: 2048
+  epochs: 100
+  batch_size: 1024
   lr: 0.0003
   weight_decay: 0.0001
   grad_clip: 1.0
-  num_neg_train: 5
+  num_neg_train: 20
   num_neg_eval: 20
-  pos_weight: null
   focal_gamma: 0.0
   hard_negative_ratio: 0.5
-  eval_hard_negative_ratio: 0.0
+  eval_hard_negative_ratio: 0.5
   degree_alpha: 0.75
 
 split:
-  val_ratio: 0.1
-  test_ratio: 0.1
-  seed: 42
-  split_strategy: stratified
-  stratify_bins: 8
-  no_enforce_train_node_coverage: false
-  save_split_artifact: null
+  split_artifact_path: ./splits/cd_split_seed42.pt
 
 scheduler:
   patience: 5
@@ -41,6 +34,6 @@ sampling:
 
 logging:
   ckpt_dir: ./checkpoints
-  run_name: test_run
-  experiment_name: HGTv2
+  run_name: hgt_example_run
+  experiment_name: HGT_linkpred
   no_amp: false

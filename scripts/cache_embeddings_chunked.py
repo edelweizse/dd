@@ -8,7 +8,7 @@ It saves only the prediction cache tensors used by `predict_cached.py`.
 
 Usage:
     python scripts/cache_embeddings_chunked.py \
-        --checkpoint /checkpoints/best.pt \
+        --checkpoint ./checkpoints/best.pt \
         --output-dir ./embeddings \
         --chunk-size 100000
 """
@@ -16,11 +16,11 @@ Usage:
 import argparse
 import gc
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 import polars as pl
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from tqdm import tqdm
 
 from src.cli_config import parse_args_with_config
@@ -123,30 +123,301 @@ def extract_model_components(checkpoint_path: str, device: torch.device) -> Dict
     }
 
 
+def _build_chem_gene_action_maps(processed_dir: str) -> Dict[str, Dict[Any, int]]:
+    """Recreate categorical IDs exactly like graph._cat_ids_from_col (sorted unique)."""
+    cg_path = Path(processed_dir) / 'chem_gene_edges.parquet'
+    if not cg_path.exists():
+        return {'action_type': {}, 'action_subject': {}}
+
+    type_values = (
+        pl.scan_parquet(cg_path)
+        .select(pl.col('ACTION_TYPE').drop_nulls().unique().sort())
+        .collect()['ACTION_TYPE']
+        .to_list()
+    )
+    subject_values = (
+        pl.scan_parquet(cg_path)
+        .select(pl.col('ACTION_SUBJECT').drop_nulls().unique().sort())
+        .collect()['ACTION_SUBJECT']
+        .to_list()
+    )
+    return {
+        'action_type': {v: i for i, v in enumerate(type_values)},
+        'action_subject': {v: i for i, v in enumerate(subject_values)},
+    }
+
+
+def _transform_edge_attrs(
+    attrs: Optional[np.ndarray],
+    attr_cols: Optional[List[str]],
+    action_maps: Dict[str, Dict[Any, int]],
+) -> Optional[torch.Tensor]:
+    if attrs is None:
+        return None
+
+    cols = attr_cols or []
+    if cols == ['ACTION_TYPE', 'ACTION_SUBJECT']:
+        type_map = action_maps.get('action_type', {})
+        subj_map = action_maps.get('action_subject', {})
+        type_ids = np.asarray([type_map.get(v, 0) for v in attrs[:, 0]], dtype=np.int64)
+        subj_ids = np.asarray([subj_map.get(v, 0) for v in attrs[:, 1]], dtype=np.int64)
+        return torch.from_numpy(np.stack([type_ids, subj_ids], axis=1))
+    if cols == ['PHENO_ACTION_TYPE']:
+        return torch.from_numpy(attrs.astype(np.int64))
+    if cols == ['INFERENCE_GENE_COUNT']:
+        return torch.from_numpy(np.log1p(attrs.astype(np.float32)))
+    return torch.from_numpy(attrs.astype(np.float32))
+
+
+def _compute_edge_gate(
+    *,
+    state_dict: Dict,
+    layer_idx: int,
+    edge_key: str,
+    edge_attr: Optional[torch.Tensor],
+    get_param,
+) -> Optional[torch.Tensor]:
+    if edge_attr is None:
+        return None
+    if edge_attr.dim() == 1:
+        edge_attr = edge_attr.view(-1, 1)
+
+    def _first_param(*keys: str) -> Optional[torch.Tensor]:
+        for key in keys:
+            if key in state_dict:
+                return get_param(key)
+        return None
+
+    # Categorical gate (chem-gene, pheno action)
+    cat_w_key = f'convs.{layer_idx}.lin_edge_cat.{edge_key}.0.weight'
+    if cat_w_key in state_dict:
+        W = get_param(cat_w_key)
+        b = get_param(f'convs.{layer_idx}.lin_edge_cat.{edge_key}.0.bias')
+        in_dim = int(W.size(1))
+        gate_in = None
+
+        action_type_emb = _first_param(
+            f'convs.{layer_idx}.action_type_emb.weight',
+            'action_type_emb.weight',
+        )
+        action_subject_emb = _first_param(
+            f'convs.{layer_idx}.action_subject_emb.weight',
+            'action_subject_emb.weight',
+        )
+        pheno_action_emb = _first_param(
+            f'convs.{layer_idx}.pheno_action_emb.weight',
+            'pheno_action_emb.weight',
+        )
+
+        # Chem-gene: ACTION_TYPE + ACTION_SUBJECT
+        if (
+            edge_attr.size(1) >= 2
+            and action_type_emb is not None
+            and action_subject_emb is not None
+        ):
+            type_emb = F.embedding(edge_attr[:, 0].long(), action_type_emb)
+            subj_emb = F.embedding(edge_attr[:, 1].long(), action_subject_emb)
+            pair_in = torch.cat([type_emb, subj_emb], dim=-1)
+            if pair_in.size(1) == in_dim:
+                gate_in = pair_in
+
+        # Pheno action: one categorical column
+        if gate_in is None and edge_attr.size(1) >= 1 and pheno_action_emb is not None:
+            pheno_in = F.embedding(edge_attr[:, 0].long(), pheno_action_emb)
+            if pheno_in.size(1) == in_dim:
+                gate_in = pheno_in
+
+        if gate_in is None:
+            gate_in = edge_attr.float()
+            if gate_in.size(1) != in_dim:
+                raise RuntimeError(
+                    f'Categorical gate input mismatch for {edge_key}: '
+                    f'got {gate_in.size(1)}, expected {in_dim}'
+                )
+        return torch.sigmoid(gate_in @ W.T + b)
+
+    # Continuous gate
+    cont_w0_key = f'convs.{layer_idx}.lin_edge_cont.{edge_key}.0.weight'
+    if cont_w0_key in state_dict:
+        W0 = get_param(cont_w0_key)
+        b0 = get_param(f'convs.{layer_idx}.lin_edge_cont.{edge_key}.0.bias')
+        W2 = get_param(f'convs.{layer_idx}.lin_edge_cont.{edge_key}.2.weight')
+        b2 = get_param(f'convs.{layer_idx}.lin_edge_cont.{edge_key}.2.bias')
+        cont = edge_attr.float()
+        if cont.size(1) != int(W0.size(1)):
+            raise RuntimeError(
+                f'Continuous gate input mismatch for {edge_key}: '
+                f'got {cont.size(1)}, expected {int(W0.size(1))}'
+            )
+        return torch.sigmoid(F.gelu(cont @ W0.T + b0) @ W2.T + b2)
+
+    return None
+
+
+def _process_single_edge_type(
+    *,
+    filepath: Path,
+    src_col: str,
+    dst_col: str,
+    src_type: str,
+    dst_type: str,
+    rel: str,
+    attr_cols: Optional[List[str]],
+    reverse: bool,
+    h: Dict[str, torch.Tensor],
+    state_dict: Dict,
+    layer_idx: int,
+    chunk_size: int,
+    device: torch.device,
+    action_maps: Dict[str, Dict[Any, int]],
+    get_param,
+) -> Optional[torch.Tensor]:
+    edge_key = f'{src_type}__{rel}__{dst_type}'
+    lin_src_key = f'convs.{layer_idx}.lin_src.{edge_key}.weight'
+    if lin_src_key not in state_dict:
+        return None
+
+    num_dst = int(h[dst_type].size(0))
+    total_edges = count_edges(filepath)
+    if total_edges == 0:
+        return None
+
+    W_src = get_param(lin_src_key)
+    b_src = get_param(f'convs.{layer_idx}.lin_src.{edge_key}.bias')
+    W_dst = get_param(f'convs.{layer_idx}.lin_dst.{edge_key}.weight')
+    b_dst = get_param(f'convs.{layer_idx}.lin_dst.{edge_key}.bias')
+    attn = get_param(f'convs.{layer_idx}.attn_{edge_key}')
+    heads = int(attn.size(1))
+    head_dim = int(attn.size(2))
+    hidden_dim = heads * head_dim
+
+    max_logits = torch.full((num_dst, heads), -torch.inf, device=device)
+
+    # Pass 1: per-destination max logit for stable softmax.
+    for offset in range(0, total_edges, chunk_size):
+        src_np, dst_np, attrs_np = load_edge_chunk(
+            filepath, src_col, dst_col, attr_cols, offset, chunk_size
+        )
+        if src_np is None:
+            break
+
+        if reverse:
+            src_ids = torch.from_numpy(dst_np).long().to(device)
+            dst_ids = torch.from_numpy(src_np).long().to(device)
+        else:
+            src_ids = torch.from_numpy(src_np).long().to(device)
+            dst_ids = torch.from_numpy(dst_np).long().to(device)
+
+        edge_attr = _transform_edge_attrs(attrs_np, attr_cols, action_maps)
+        if edge_attr is not None:
+            edge_attr = edge_attr.to(device)
+
+        src_x = h[src_type][src_ids]
+        dst_x = h[dst_type][dst_ids]
+        msg_src = src_x @ W_src.T + b_src
+        msg_dst = dst_x @ W_dst.T + b_dst
+        msg = msg_src + msg_dst
+
+        gate = _compute_edge_gate(
+            state_dict=state_dict,
+            layer_idx=layer_idx,
+            edge_key=edge_key,
+            edge_attr=edge_attr,
+            get_param=get_param,
+        )
+        if gate is not None:
+            msg = msg * gate
+
+        msg_heads = msg.view(-1, heads, head_dim)
+        src_heads = msg_src.view(-1, heads, head_dim)
+        dst_heads = msg_dst.view(-1, heads, head_dim)
+        logits = (src_heads * dst_heads).sum(dim=-1) / (head_dim ** 0.5)
+        logits = logits + (msg_heads * attn).sum(dim=-1)
+
+        idx = dst_ids.unsqueeze(-1).expand(-1, heads)
+        max_logits.scatter_reduce_(0, idx, logits, reduce='amax', include_self=True)
+
+    # Pass 2: aggregate normalized attention-weighted messages.
+    denom = torch.zeros((num_dst, heads), device=device)
+    numer = torch.zeros((num_dst, heads, head_dim), device=device)
+    for offset in range(0, total_edges, chunk_size):
+        src_np, dst_np, attrs_np = load_edge_chunk(
+            filepath, src_col, dst_col, attr_cols, offset, chunk_size
+        )
+        if src_np is None:
+            break
+
+        if reverse:
+            src_ids = torch.from_numpy(dst_np).long().to(device)
+            dst_ids = torch.from_numpy(src_np).long().to(device)
+        else:
+            src_ids = torch.from_numpy(src_np).long().to(device)
+            dst_ids = torch.from_numpy(dst_np).long().to(device)
+
+        edge_attr = _transform_edge_attrs(attrs_np, attr_cols, action_maps)
+        if edge_attr is not None:
+            edge_attr = edge_attr.to(device)
+
+        src_x = h[src_type][src_ids]
+        dst_x = h[dst_type][dst_ids]
+        msg_src = src_x @ W_src.T + b_src
+        msg_dst = dst_x @ W_dst.T + b_dst
+        msg = msg_src + msg_dst
+
+        gate = _compute_edge_gate(
+            state_dict=state_dict,
+            layer_idx=layer_idx,
+            edge_key=edge_key,
+            edge_attr=edge_attr,
+            get_param=get_param,
+        )
+        if gate is not None:
+            msg = msg * gate
+
+        msg_heads = msg.view(-1, heads, head_dim)
+        src_heads = msg_src.view(-1, heads, head_dim)
+        dst_heads = msg_dst.view(-1, heads, head_dim)
+        logits = (src_heads * dst_heads).sum(dim=-1) / (head_dim ** 0.5)
+        logits = logits + (msg_heads * attn).sum(dim=-1)
+
+        weights_unnorm = torch.exp(logits - max_logits[dst_ids])
+        idx = dst_ids.unsqueeze(-1).expand(-1, heads)
+        denom.scatter_add_(0, idx, weights_unnorm)
+
+        weighted = msg_heads * weights_unnorm.unsqueeze(-1)
+        idx3 = dst_ids.view(-1, 1, 1).expand(-1, heads, head_dim)
+        numer.scatter_add_(0, idx3, weighted)
+
+    aggr_heads = numer / denom.clamp_min(1e-12).unsqueeze(-1)
+    aggr = aggr_heads.reshape(num_dst, hidden_dim)
+    return aggr
+
+
 def chunked_message_passing(
     h: Dict[str, torch.Tensor],
     state_dict: Dict,
     layer_idx: int,
     processed_dir: str,
     chunk_size: int,
-    device: torch.device
+    device: torch.device,
+    action_maps: Dict[str, Dict[Any, int]],
 ) -> Dict[str, torch.Tensor]:
     """
-    Perform one layer of message passing by processing edges in chunks.
-    
-    This avoids loading all edges into memory at once.
+    Perform one exact HGT layer with chunked edge streaming.
+
+    This matches EdgeAttrHeteroConv semantics (edge gates + attention softmax)
+    while keeping memory bounded by chunk size.
     """
     processed_path = Path(processed_dir)
-    hidden_dim = h['chemical'].shape[1]
-    
+
     edge_configs = [
         # (file, src_col, dst_col, src_type, dst_type, rel, attr_cols)
         ('chem_disease_edges.parquet', 'CHEM_ID', 'DS_ID', 'chemical', 'disease', 'associated_with', None),
         ('chem_gene_edges.parquet', 'CHEM_ID', 'GENE_ID', 'chemical', 'gene', 'affects', ['ACTION_TYPE', 'ACTION_SUBJECT']),
-        ('disease_gene_edges.parquet', 'DS_ID', 'GENE_ID', 'disease', 'gene', 'targets', None),
+        ('disease_gene_edges.parquet', 'DS_ID', 'GENE_ID', 'disease', 'gene', 'targets', ['DIRECT_EVIDENCE_TYPE', 'LOG_PUBMED_COUNT']),
         ('ppi_edges.parquet', 'GENE_ID_1', 'GENE_ID_2', 'gene', 'gene', 'interacts_with', None),
     ]
-    
+
     extended_edges = [
         ('gene_pathway_edges.parquet', 'GENE_ID', 'PATHWAY_ID', 'gene', 'pathway', 'participates_in', None),
         ('disease_pathway_edges.parquet', 'DS_ID', 'PATHWAY_ID', 'disease', 'pathway', 'disrupts', ['INFERENCE_GENE_COUNT']),
@@ -155,147 +426,106 @@ def chunked_message_passing(
         ('chem_pheno_edges.parquet', 'CHEM_ID', 'GO_TERM_ID', 'chemical', 'go_term', 'affects_phenotype', ['PHENO_ACTION_TYPE']),
         ('go_disease_edges.parquet', 'GO_TERM_ID', 'DS_ID', 'go_term', 'disease', 'associated_with', ['ONTOLOGY_TYPE', 'LOG_INFERENCE_CHEM', 'LOG_INFERENCE_GENE']),
     ]
-    
     for cfg in extended_edges:
         if (processed_path / cfg[0]).exists():
             edge_configs.append(cfg)
 
-    h_out = {ntype: torch.zeros_like(emb) for ntype, emb in h.items()}
-    h_count = {ntype: torch.zeros(emb.shape[0], device=emb.device) for ntype, emb in h.items()}
-    
-    # Process each edge type
-    for config in tqdm(edge_configs, desc=f"Layer {layer_idx} edges"):
+    param_cache: Dict[str, torch.Tensor] = {}
+
+    def get_param(key: str) -> torch.Tensor:
+        if key not in param_cache:
+            param_cache[key] = state_dict[key].to(device)
+        return param_cache[key]
+
+    out_dict: Dict[str, List[torch.Tensor]] = {ntype: [] for ntype in h.keys()}
+
+    for config in tqdm(edge_configs, desc=f'Layer {layer_idx} edges'):
         filename, src_col, dst_col, src_type, dst_type, rel, attr_cols = config
         filepath = processed_path / filename
-        
         if not filepath.exists():
             continue
-        
         if src_type not in h or dst_type not in h:
             continue
-        
-        # Get linear transform weights
-        edge_key = f'{src_type}__{rel}__{dst_type}'
-        lin_src_key = f'convs.{layer_idx}.lin_src.{edge_key}.weight'
-        lin_dst_key = f'convs.{layer_idx}.lin_dst.{edge_key}.weight'
-        
-        if lin_src_key not in state_dict:
-            continue
-        
-        W_src = state_dict[lin_src_key].to(device)
-        b_src = state_dict[f'convs.{layer_idx}.lin_src.{edge_key}.bias'].to(device)
-        W_dst = state_dict[lin_dst_key].to(device)
-        b_dst = state_dict[f'convs.{layer_idx}.lin_dst.{edge_key}.bias'].to(device)
-        
-        # Count total edges
-        total_edges = count_edges(filepath)
-        
-        # Process in chunks
-        offset = 0
-        while offset < total_edges:
-            src_ids, dst_ids, attrs = load_edge_chunk(
-                filepath, src_col, dst_col, attr_cols, offset, chunk_size
+
+        # Forward relation
+        aggr_fw = _process_single_edge_type(
+            filepath=filepath,
+            src_col=src_col,
+            dst_col=dst_col,
+            src_type=src_type,
+            dst_type=dst_type,
+            rel=rel,
+            attr_cols=attr_cols,
+            reverse=False,
+            h=h,
+            state_dict=state_dict,
+            layer_idx=layer_idx,
+            chunk_size=chunk_size,
+            device=device,
+            action_maps=action_maps,
+            get_param=get_param,
+        )
+        if aggr_fw is not None:
+            out_dict[dst_type].append(aggr_fw)
+
+        # Reverse relation if present in checkpoint.
+        rev_rel = f'rev_{rel}'
+        rev_key = f'convs.{layer_idx}.lin_src.{dst_type}__{rev_rel}__{src_type}.weight'
+        if rev_key in state_dict:
+            aggr_rev = _process_single_edge_type(
+                filepath=filepath,
+                src_col=src_col,
+                dst_col=dst_col,
+                src_type=dst_type,
+                dst_type=src_type,
+                rel=rev_rel,
+                attr_cols=attr_cols,
+                reverse=True,
+                h=h,
+                state_dict=state_dict,
+                layer_idx=layer_idx,
+                chunk_size=chunk_size,
+                device=device,
+                action_maps=action_maps,
+                get_param=get_param,
             )
-            
-            if src_ids is None:
-                break
-            
-            src_ids = torch.from_numpy(src_ids).long().to(device)
-            dst_ids = torch.from_numpy(dst_ids).long().to(device)
-            
-            # Compute messages: linear(src) + linear(dst)
-            src_feat = h[src_type][src_ids]  # [E, hidden]
-            dst_feat = h[dst_type][dst_ids]  # [E, hidden]
-            
-            msg = (src_feat @ W_src.T + b_src) + (dst_feat @ W_dst.T + b_dst)
-            
-            # Aggregate to destination (scatter add)
-            h_out[dst_type].scatter_add_(0, dst_ids.unsqueeze(-1).expand_as(msg), msg)
-            h_count[dst_type].scatter_add_(0, dst_ids, torch.ones(dst_ids.shape[0], device=device))
-            
-            offset += chunk_size
-            
-            # Free memory
-            del src_ids, dst_ids, src_feat, dst_feat, msg
-            if attrs is not None:
-                del attrs
-        
-        # Also process reverse edges
-        rev_edge_key = f'{dst_type}__rev_{rel}__{src_type}'
-        rev_lin_src_key = f'convs.{layer_idx}.lin_src.{rev_edge_key}.weight'
-        
-        if rev_lin_src_key in state_dict:
-            W_src_rev = state_dict[rev_lin_src_key].to(device)
-            b_src_rev = state_dict[f'convs.{layer_idx}.lin_src.{rev_edge_key}.bias'].to(device)
-            W_dst_rev = state_dict[f'convs.{layer_idx}.lin_dst.{rev_edge_key}.weight'].to(device)
-            b_dst_rev = state_dict[f'convs.{layer_idx}.lin_dst.{rev_edge_key}.bias'].to(device)
-            
-            offset = 0
-            while offset < total_edges:
-                src_ids, dst_ids, attrs = load_edge_chunk(
-                    filepath, src_col, dst_col, attr_cols, offset, chunk_size
-                )
-                
-                if src_ids is None:
-                    break
-                
-                # Reverse the direction
-                src_ids_rev = torch.from_numpy(dst_ids).long().to(device)
-                dst_ids_rev = torch.from_numpy(src_ids).long().to(device)
-                
-                src_feat = h[dst_type][src_ids_rev]
-                dst_feat = h[src_type][dst_ids_rev]
-                
-                msg = (src_feat @ W_src_rev.T + b_src_rev) + (dst_feat @ W_dst_rev.T + b_dst_rev)
-                
-                h_out[src_type].scatter_add_(0, dst_ids_rev.unsqueeze(-1).expand_as(msg), msg)
-                h_count[src_type].scatter_add_(0, dst_ids_rev, torch.ones(dst_ids_rev.shape[0], device=device))
-                
-                offset += chunk_size
-                
-                del src_ids_rev, dst_ids_rev, src_feat, dst_feat, msg
-        
-        # Clean up layer weights
-        del W_src, b_src, W_dst, b_dst
-        gc.collect()
-        if device.type == 'cuda':
-            torch.cuda.empty_cache()
-    
-    # Average messages and apply output projection + residual
-    for ntype in h_out:
-        count = h_count[ntype].clamp(min=1).unsqueeze(-1)
-        h_out[ntype] = h_out[ntype] / count
-        
-        # Output projection
+            if aggr_rev is not None:
+                out_dict[src_type].append(aggr_rev)
+
+    # Combine per-edge-type outputs and apply lin_out.
+    h_new: Dict[str, torch.Tensor] = {}
+    for ntype in h.keys():
+        msgs = out_dict[ntype]
+        if not msgs:
+            h_new[ntype] = h[ntype]
+            continue
+        combined = torch.stack(msgs, dim=0).mean(dim=0)
         out_key = f'convs.{layer_idx}.lin_out.{ntype}.weight'
         if out_key in state_dict:
-            W_out = state_dict[out_key].to(device)
-            b_out = state_dict[f'convs.{layer_idx}.lin_out.{ntype}.bias'].to(device)
-            h_out[ntype] = h_out[ntype] @ W_out.T + b_out
-            del W_out, b_out
-        
-        # Residual connection
-        h_out[ntype] = h_out[ntype] + h[ntype]
-        
-        # LayerNorm
+            W_out = get_param(out_key)
+            b_out = get_param(f'convs.{layer_idx}.lin_out.{ntype}.bias')
+            combined = combined @ W_out.T + b_out
+        h_new[ntype] = combined
+
+    # Residual + LayerNorm + GELU (dropout is disabled in eval mode).
+    result: Dict[str, torch.Tensor] = {}
+    for ntype in h.keys():
+        x = h_new[ntype] + h[ntype]
         norm_w_key = f'norms.{layer_idx}.{ntype}.weight'
         if norm_w_key in state_dict:
-            norm_w = state_dict[norm_w_key].to(device)
-            norm_b = state_dict[f'norms.{layer_idx}.{ntype}.bias'].to(device)
-            
-            mean = h_out[ntype].mean(dim=-1, keepdim=True)
-            std = h_out[ntype].std(dim=-1, keepdim=True)
-            h_out[ntype] = (h_out[ntype] - mean) / (std + 1e-5) * norm_w + norm_b
-            del norm_w, norm_b
-        
-        # GELU activation
-        h_out[ntype] = torch.nn.functional.gelu(h_out[ntype])
-    
+            x = F.layer_norm(
+                x,
+                (x.size(-1),),
+                weight=get_param(norm_w_key),
+                bias=get_param(f'norms.{layer_idx}.{ntype}.bias'),
+                eps=1e-5,
+            )
+        result[ntype] = F.gelu(x)
+
     gc.collect()
     if device.type == 'cuda':
         torch.cuda.empty_cache()
-    
-    return h_out
+    return result
 
 
 def compute_embeddings_chunked(
@@ -319,6 +549,7 @@ def compute_embeddings_chunked(
     node_embeddings = components['node_embeddings']
     state_dict = components['state_dict']
     num_layers = components['num_layers']
+    action_maps = _build_chem_gene_action_maps(processed_dir)
     
     # Initialize node features from embeddings
     print("\nInitializing node embeddings...")
@@ -333,7 +564,13 @@ def compute_embeddings_chunked(
     for layer_idx in range(num_layers):
         print(f"\nProcessing layer {layer_idx + 1}/{num_layers}...")
         h = chunked_message_passing(
-            h, state_dict, layer_idx, processed_dir, chunk_size, device
+            h=h,
+            state_dict=state_dict,
+            layer_idx=layer_idx,
+            processed_dir=processed_dir,
+            chunk_size=chunk_size,
+            device=device,
+            action_maps=action_maps,
         )
         gc.collect()
         if device.type == 'cuda':
@@ -365,7 +602,7 @@ def main():
     
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
                         help='Path to processed data directory')
-    parser.add_argument('--checkpoint', type=str, default='/checkpoints/best.pt',
+    parser.add_argument('--checkpoint', type=str, default='./checkpoints/best.pt',
                         help='Path to model checkpoint')
     parser.add_argument('--output-dir', type=str, default='./embeddings',
                         help='Directory to save embeddings')
