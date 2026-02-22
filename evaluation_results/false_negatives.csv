@@ -1,0 +1,51 @@
+Chemical,Disease,Score,Error
+quinocetone,Escherichia coli Infections,2.5721925e-09,False Negative
+methylethyl ketone,Seizures,3.3359036e-09,False Negative
+polyaspartate,Kidney Diseases,2.5172811e-08,False Negative
+2-mercapto-1-methylimidazole,Hyperthyroidism,3.87392e-08,False Negative
+Ornidazole,Peripheral Nervous System Diseases,1.2388068e-07,False Negative
+Glucosylceramides,"Carcinoma, Ehrlich Tumor",1.7637059e-07,False Negative
+"1,4-naphthoquinone","Anemia, Hemolytic",1.8651556e-07,False Negative
+N-7-(2-(nitrophenyldithio)ethyl)mitomycin C,Neoplasms,3.0595416e-07,False Negative
+doramapimod,Crohn Disease,3.2311564e-07,False Negative
+CFM 1,Neoplasm Invasiveness,3.2795992e-07,False Negative
+Propanil,Edema,3.4397905e-07,False Negative
+"dimethyl-4,4'-dimethoxy-5,6,5',6'-dimethylene dioxybiphenyl-2,2'-dicarboxylate","Hepatitis B, Chronic",3.555174e-07,False Negative
+Shiga Toxin 2,Hemolytic-Uremic Syndrome,4.4934146e-07,False Negative
+BGP 15,Peripheral Nervous System Diseases,5.3840654e-07,False Negative
+Hair Dyes,Trismus,5.698134e-07,False Negative
+fibric acid,Rhabdomyolysis,5.7255494e-07,False Negative
+4-chlorophenol,Chromosome Aberrations,6.9741986e-07,False Negative
+Ornidazole,Drug-Related Side Effects and Adverse Reactions,7.320707e-07,False Negative
+dibenzofuran,"Infertility, Female",7.452341e-07,False Negative
+"20-hydroxy-5,8,11,14-eicosatetraenoic acid",Liver Cirrhosis,1.2509248e-06,False Negative
+Brompheniramine,"Rhinitis, Allergic, Seasonal",1.9976994e-06,False Negative
+Sodium Tetradecyl Sulfate,Vascular Malformations,2.4195103e-06,False Negative
+Glucagon-Like Peptide-1 Receptor Agonists,Hair Diseases,2.4436386e-06,False Negative
+Artemether,Malaria,3.0686372e-06,False Negative
+siponimod,Multiple Sclerosis,3.0972235e-06,False Negative
+"N-(2-(3,4-Dichlorphenyl)ethyl)-N,N',N'-trimethyl-1,2-ethandiamin",Headache,3.7419172e-06,False Negative
+Wastewater,Gastrointestinal Diseases,4.255868e-06,False Negative
+9-hydroxybenzo(a)pyrene,"Abnormalities, Drug-Induced",4.2607453e-06,False Negative
+3-cresol,Chemical and Drug Induced Liver Injury,4.2982438e-06,False Negative
+dehydroxymethylepoxyquinomicin,Pancreatic Neoplasms,4.38851e-06,False Negative
+NSC 689534,Necrosis,4.46211e-06,False Negative
+2-Propanol,Kidney Diseases,5.0490507e-06,False Negative
+pymetrozine,Anorexia,5.167267e-06,False Negative
+S-Adenosylhomocysteine,"Carcinoma, Hepatocellular",5.282308e-06,False Negative
+CHOP protocol,"Jaundice, Obstructive",5.370709e-06,False Negative
+atranorin,Inflammation,5.476161e-06,False Negative
+Dexetimide,Parkinsonian Disorders,5.9901176e-06,False Negative
+Carboxymethylcellulose Sodium,Hyperglycemia,6.4049977e-06,False Negative
+Ethyl Methanesulfonate,Chromosome Breakage,6.6294147e-06,False Negative
+tulobuterol,Tremor,7.10422e-06,False Negative
+BW 245C,Pulmonary Fibrosis,7.262065e-06,False Negative
+4-cresol,Hyperplasia,7.89292e-06,False Negative
+Wastewater,Weight Gain,8.474939e-06,False Negative
+chlorodibromomethane,Chemical and Drug Induced Liver Injury,8.520963e-06,False Negative
+Cyclofenil,"Infertility, Female",9.225423e-06,False Negative
+D-161 compound,"Disease Models, Animal",9.713625e-06,False Negative
+2-hexenal,Anxiety Disorders,1.0139492e-05,False Negative
+propiverine,Prostatic Hyperplasia,1.0566439e-05,False Negative
+Angiotensin II Type 1 Receptor Blockers,Proteinuria,1.0724538e-05,False Negative
+alizapride,Vomiting,1.074243e-05,False Negative

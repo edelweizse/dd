@@ -10,7 +10,7 @@ Core implementation package for the project.
   - Split artifacts, loaders, negative sampling
 
 - `src/models`
-  - Trainable architectures (`HGTPredictor`, `GenericLinkPredictor`)
+  - Trainable architectures (`HGATPredictor`, `GenericLinkPredictor`)
   - Inference wrappers (full-graph and cached)
   - Baselines and model-comparison utilities
 

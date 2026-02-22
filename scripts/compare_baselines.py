@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Compare a trained main HGT checkpoint against baseline models."""
+"""Compare a trained main HGAT checkpoint against baseline models."""
 
 from __future__ import annotations
 
@@ -18,12 +18,17 @@ from src.evaluation.protocol import (
     load_evaluation_protocol,
     validate_evaluation_protocol,
 )
-from src.models.baselines import BASELINE_NAMES, ComparisonConfig, compare_main_and_baselines
+from src.models.baselines import (
+    BASELINE_NAMES,
+    ComparisonConfig,
+    compare_main_and_baselines,
+    normalize_baseline_name,
+)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Compare main HGT checkpoint to baselines")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained main HGT checkpoint")
+    parser = argparse.ArgumentParser(description="Compare main HGAT checkpoint to baselines")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained main HGAT checkpoint")
     parser.add_argument("--processed-dir", type=str, default="./data/processed", help="Processed data directory")
     parser.add_argument("--output-dir", type=str, default="./baseline_comparison", help="Output directory")
     parser.add_argument(
@@ -109,7 +114,9 @@ def main() -> None:
 
     args, _ = parse_args_with_config(parser)
 
-    baseline_names = [x.strip().lower() for x in args.baselines.split(",") if x.strip()]
+    baseline_names = [normalize_baseline_name(x) for x in args.baselines.split(",") if x.strip()]
+    # De-duplicate while preserving order.
+    baseline_names = list(dict.fromkeys(baseline_names))
     invalid = [x for x in baseline_names if x not in BASELINE_NAMES]
     if invalid:
         raise ValueError(f"Invalid baseline names: {invalid}. Available: {BASELINE_NAMES}")
@@ -207,9 +214,9 @@ def main() -> None:
         max_train_batches=args.max_train_batches,
         max_eval_batches=args.max_eval_batches,
     )
-    if device.type == "cpu" and "generic_hgt" in baseline_names and int(args.epochs) > 1:
+    if device.type == "cpu" and "generic_hgat" in baseline_names and int(args.epochs) > 1:
         print(
-            "Warning: generic_hgt on CPU with multiple epochs can be very slow. "
+            "Warning: generic_hgat on CPU with multiple epochs can be very slow. "
             "Use --epochs 1 for smoke runs, or reduce loader work via "
             "--num-neighbours, --num-neg-eval, --max-*-batches.",
             flush=True,

@@ -403,7 +403,7 @@ def chunked_message_passing(
     action_maps: Dict[str, Dict[Any, int]],
 ) -> Dict[str, torch.Tensor]:
     """
-    Perform one exact HGT layer with chunked edge streaming.
+    Perform one exact HGAT layer with chunked edge streaming.
 
     This matches EdgeAttrHeteroConv semantics (edge gates + attention softmax)
     while keeping memory bounded by chunk size.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Comprehensive model evaluation for HGT chemical-disease link prediction.
+Comprehensive model evaluation for HGAT chemical-disease link prediction.
 
 This script generates:
 - Overall performance metrics (AUROC, AUPRC, MRR, Hits@K)
@@ -47,7 +47,7 @@ from src.evaluation.protocol import (
     load_evaluation_protocol,
     validate_evaluation_protocol,
 )
-from src.models.architectures.hgt import HGTPredictor, infer_hgt_hparams_from_state
+from src.models.architectures.hgat import HGATPredictor, infer_hgat_hparams_from_state
 
 
 def _batch_global_ids(batch, node_type: str) -> np.ndarray:
@@ -85,7 +85,7 @@ TABLE_FLOAT_FORMAT = '{:.4f}'
 
 @torch.no_grad()
 def collect_all_predictions(
-    model: HGTPredictor,
+    model: HGATPredictor,
     loader,
     known_pos,
     device: torch.device,
@@ -565,7 +565,7 @@ def plot_per_entity_performance(
 
 
 def plot_embedding_tsne(
-    model: HGTPredictor,
+    model: HGATPredictor,
     data,
     node_type: str,
     entity_names: Dict[int, str],
@@ -772,7 +772,7 @@ def save_html_report(
 <!DOCTYPE html>
 <html>
 <head>
-    <title>HGT Model Evaluation Report</title>
+    <title>HGAT Model Evaluation Report</title>
     <style>
         body {{ font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }}
         .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
@@ -791,7 +791,7 @@ def save_html_report(
 </head>
 <body>
     <div class="container">
-        <h1>HGT Chemical-Disease Link Prediction - Evaluation Report</h1>
+        <h1>HGAT Chemical-Disease Link Prediction - Evaluation Report</h1>
         <p class="timestamp">Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
         
         <h2>Overall Performance</h2>
@@ -852,7 +852,7 @@ def save_html_report(
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='Comprehensive HGT model evaluation')
+    parser = argparse.ArgumentParser(description='Comprehensive HGAT model evaluation')
     
     parser.add_argument('--checkpoint', type=str, required=True,
                         help='Path to model checkpoint')
@@ -1021,8 +1021,8 @@ def main():
     }
     
     ckpt = torch.load(args.checkpoint, map_location=device)
-    model_cfg = infer_hgt_hparams_from_state(ckpt['model_state'])
-    model = HGTPredictor(
+    model_cfg = infer_hgat_hparams_from_state(ckpt['model_state'])
+    model = HGATPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=arts.data_train.metadata(),
         node_input_dims=model_cfg['node_input_dims'] or node_input_dims,

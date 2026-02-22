@@ -1,0 +1,74 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HGAT Model Evaluation Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #3498db; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #f5f5f5; }
+        .metric-value { font-weight: bold; color: #2ecc71; }
+        .plot-container { margin: 20px 0; text-align: center; }
+        .plot-container img { max-width: 100%; border: 1px solid #ddd; border-radius: 5px; }
+        .timestamp { color: #7f8c8d; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>HGAT Chemical-Disease Link Prediction - Evaluation Report</h1>
+        <p class="timestamp">Generated: 2026-02-22 16:48:38</p>
+        
+        <h2>Overall Performance</h2>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+            <tr><td>AUROC</td><td class="metric-value">0.9489</td></tr>
+            <tr><td>AUPRC</td><td class="metric-value">0.4711</td></tr>
+            <tr><td>MRR</td><td class="metric-value">0.7083</td></tr>
+            <tr><td>Hits@10</td><td class="metric-value">0.9992</td></tr>
+            <tr><td>Hits@50</td><td class="metric-value">1.0000</td></tr>
+        </table>
+        
+        <h2>ROC Curve</h2>
+        <div class="plot-container">
+            <img src="roc_curve.png" alt="ROC Curve">
+        </div>
+        
+        <h2>Precision-Recall Curve</h2>
+        <div class="plot-container">
+            <img src="pr_curve.png" alt="PR Curve">
+        </div>
+        
+        <h2>Score Distribution</h2>
+        <div class="plot-container">
+            <img src="score_distribution.png" alt="Score Distribution">
+        </div>
+        
+        <h2>Calibration</h2>
+        <div class="plot-container">
+            <img src="calibration.png" alt="Calibration">
+        </div>
+        
+        <h2>Ranking Metrics</h2>
+        <div class="plot-container">
+            <img src="ranking_metrics.png" alt="Ranking Metrics">
+        </div>
+        
+        <h2>Per-Disease Analysis</h2>
+        <div class="plot-container">
+            <img src="per_disease_analysis.png" alt="Per-Disease Analysis">
+        </div>
+        
+        <h2>Per-Chemical Analysis</h2>
+        <div class="plot-container">
+            <img src="per_chemical_analysis.png" alt="Per-Chemical Analysis">
+        </div>
+    </div>
+</body>
+</html>
+    

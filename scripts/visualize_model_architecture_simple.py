@@ -61,7 +61,7 @@ def main():
         0.35,
         0.2,
         0.3,
-        "HGT Encoder\n(2 message-passing\nlayers)",
+        "HGAT Encoder\n(2 message-passing\nlayers)",
         fc="#dcfce7",
         fontsize=12,
     )
@@ -92,7 +92,7 @@ def main():
 
     ax.text(0.89, 0.26, "Output: link probability\nfor chemical-disease pair", ha="center", va="center", fontsize=11, color="#1f2937")
 
-    ax.set_title("Simple Model Architecture (HGT for Chemical-Disease Link Prediction)", fontsize=16, fontweight="bold", pad=14)
+    ax.set_title("Simple Model Architecture (HGAT for Chemical-Disease Link Prediction)", fontsize=16, fontweight="bold", pad=14)
     fig.tight_layout()
 
     png_path = out_dir / "model_architecture_simple.png"

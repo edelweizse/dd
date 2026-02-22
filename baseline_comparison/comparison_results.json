@@ -1,0 +1,89 @@
+{
+  "main_hgat": {
+    "val_auroc": 0.9258879383607125,
+    "val_auprc": 0.3920514336121939,
+    "val_mrr": 0.6515457420904238,
+    "val_hits_5": 0.9397453398474676,
+    "val_hits_10": 0.9936334697589814,
+    "val_hits_20": 1.0,
+    "val_hits_50": 1.0,
+    "test_auroc": 0.9279913192925761,
+    "test_auprc": 0.39835138772929884,
+    "test_mrr": 0.6546286992887954,
+    "test_hits_5": 0.9416780368801462,
+    "test_hits_10": 0.9956798526090402,
+    "test_hits_20": 1.0,
+    "test_hits_50": 1.0,
+    "train_seconds": 0.0,
+    "eval_seconds": 8.146890878677368
+  },
+  "degree": {
+    "val_auroc": 0.7801258429407223,
+    "val_auprc": 0.17823990566782577,
+    "val_mrr": 0.43074615473853506,
+    "val_n_pos": 8796.0,
+    "val_hits_5": 0.7361300594701502,
+    "val_hits_10": 0.9574806719489832,
+    "val_hits_20": 1.0,
+    "val_hits_50": 1.0,
+    "test_auroc": 0.7846988406275661,
+    "test_auprc": 0.1873056413779688,
+    "test_mrr": 0.4408863922068616,
+    "test_n_pos": 8796.0,
+    "test_hits_5": 0.7413597100157259,
+    "test_hits_10": 0.9633924527946739,
+    "test_hits_20": 1.0,
+    "test_hits_50": 1.0,
+    "train_seconds": 0.0007166862487792969,
+    "eval_seconds": 0.9003944396972656,
+    "train_loss": NaN
+  },
+  "mf": {
+    "val_auroc": 0.7558157646148844,
+    "val_auprc": 0.16954244587526718,
+    "val_mrr": 0.4116207809137073,
+    "val_n_pos": 8796.0,
+    "val_hits_5": 0.6573442458401706,
+    "val_hits_10": 0.7314688485825588,
+    "val_hits_20": 0.9935197804721175,
+    "val_hits_50": 1.0,
+    "test_auroc": 0.7578843906243505,
+    "test_auprc": 0.1794430337021473,
+    "test_mrr": 0.41620221812652425,
+    "test_n_pos": 8796.0,
+    "test_hits_5": 0.6566621195516461,
+    "test_hits_10": 0.7354479313113571,
+    "test_hits_20": 0.9952251026716055,
+    "test_hits_50": 1.0,
+    "train_seconds": 25.93726682662964,
+    "eval_seconds": 1.1400229930877686,
+    "train_loss": 0.5950639015970918
+  },
+  "evaluation_protocol": {
+    "version": 1,
+    "config_path": "configs/examples/eval_protocol.yaml",
+    "strict_mode": true,
+    "allow_noncomparable": false,
+    "comparable": true,
+    "violations": [],
+    "warnings": [],
+    "checks": {
+      "required_num_neg_eval": 20,
+      "observed_num_neg_eval": 20,
+      "required_eval_hard_negative_ratio": 0.0,
+      "observed_eval_hard_negative_ratio": 0.0,
+      "require_split_artifact": true,
+      "observed_split_artifact_path": "./splits/cd_split_seed42.pt",
+      "allowed_split_strategy": [
+        "stratified"
+      ],
+      "required_split_metadata_keys": [
+        "seed",
+        "val_ratio",
+        "test_ratio",
+        "split_strategy",
+        "stratify_bins"
+      ]
+    }
+  }
+}

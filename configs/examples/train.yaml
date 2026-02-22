@@ -34,6 +34,6 @@ sampling:
 
 logging:
   ckpt_dir: ./checkpoints
-  run_name: hgt_example_run
-  experiment_name: HGT_linkpred
+  run_name: hgat_example_run
+  experiment_name: HGAT_linkpred
   no_amp: false

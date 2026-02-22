@@ -5,7 +5,7 @@ Model namespace split by responsibility.
 ## Submodules
 
 - `architectures/`
-  - trainable model definitions (`HGTPredictor`, `GenericLinkPredictor`)
+  - trainable model definitions (`HGATPredictor`, `GenericLinkPredictor`)
 
 - `inference/`
   - predictor wrappers for full-graph and cached-embedding serving
@@ -16,7 +16,7 @@ Model namespace split by responsibility.
 ## Compatibility Layers
 
 Legacy wrappers are kept for backward compatibility:
-- `hgt.py`
+- `hgat.py`
 - `predictor.py`
 - `predictor_efficient.py`
 
@@ -25,9 +25,9 @@ Use namespaced imports for new code.
 ## Import Guidance
 
 - Main architecture:
-  - `from src.models.architectures.hgt import HGTPredictor`
+  - `from src.models.architectures.hgat import HGATPredictor`
 - Generic architecture:
-  - `from src.models.architectures.generic_hgt import GenericLinkPredictor`
+  - `from src.models.architectures.generic_hgat import GenericLinkPredictor`
 - Full-graph inference:
   - `from src.models.inference.full_graph import FullGraphPredictor`
 - Cached inference:

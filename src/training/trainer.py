@@ -17,7 +17,7 @@ import mlflow
 from typing import Tuple, Optional, Dict, Any
 
 from src.data.splits import SplitArtifacts, negative_sample_cd_batch_local
-from src.models.architectures.hgt import HGTPredictor
+from src.models.architectures.hgat import HGATPredictor
 from .utils import bce_with_logits, eval_epoch
 
 try:
@@ -39,7 +39,7 @@ def _seeded_generator(seed: int, device: torch.device) -> torch.Generator:
 
 def save_checkpoint(
     path: str,
-    model: HGTPredictor,
+    model: HGATPredictor,
     optimizer: torch.optim.Optimizer,
     scheduler: torch.optim.lr_scheduler.LRScheduler,
     epoch: int,
@@ -68,7 +68,7 @@ def save_checkpoint(
 
 def load_checkpoint(
     path: str,
-    model: HGTPredictor,
+    model: HGATPredictor,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[torch.optim.lr_scheduler.LRScheduler] = None,
     device: torch.device = None
@@ -97,11 +97,11 @@ def load_checkpoint(
 
 def train(
     arts: SplitArtifacts,
-    model: HGTPredictor,
+    model: HGATPredictor,
     device: torch.device,
     *,
-    run_name: str = 'hgt_cd_linkpred',
-    experiment_name: str = 'CTD_HGT',
+    run_name: str = 'hgat_cd_linkpred',
+    experiment_name: str = 'CTD_HGAT',
     epochs: int = 50,
     lr: float = 3e-4,
     weight_decay: float = 1e-4,
@@ -120,13 +120,13 @@ def train(
     hard_negative_ratio: float = 0.5,
     degree_alpha: float = 0.75,
     eval_hard_negative_ratio: float = 0.0
-) -> HGTPredictor:
+) -> HGATPredictor:
     """
     Train the model with MLflow logging.
     
     Args:
         arts: SplitArtifacts containing data loaders and split info.
-        model: HGTPredictor model to train.
+        model: HGATPredictor model to train.
         device: Torch device.
         run_name: MLflow run name.
         experiment_name: MLflow experiment name.
@@ -185,7 +185,7 @@ def train(
     
     with mlflow.start_run(run_name=run_name):
         mlflow.log_params({
-            'model': 'HGTPredictor',
+            'model': 'HGATPredictor',
             'epochs': epochs,
             'lr': lr,
             'weight_decay': weight_decay,
@@ -352,11 +352,11 @@ def train(
 def train_for_tuning(
     trial: 'optuna.Trial',
     arts: SplitArtifacts,
-    model: HGTPredictor,
+    model: HGATPredictor,
     device: torch.device,
     *,
     run_name: str,
-    experiment_name: str = 'HGT_tuning',
+    experiment_name: str = 'HGAT_tuning',
     epochs: int = 25,
     lr: float = 3e-4,
     weight_decay: float = 1e-4,
@@ -389,7 +389,7 @@ def train_for_tuning(
     Args:
         trial: Optuna Trial object for pruning decisions.
         arts: SplitArtifacts containing data loaders and split info.
-        model: HGTPredictor model to train.
+        model: HGATPredictor model to train.
         device: Torch device.
         run_name: MLflow run name (usually includes trial number).
         experiment_name: MLflow experiment name.
@@ -455,7 +455,7 @@ def train_for_tuning(
     with mlflow.start_run(run_name=run_name):
         # Log hyperparameters
         params_to_log = {
-            'model': 'HGTPredictor',
+            'model': 'HGATPredictor',
             'epochs': epochs,
             'lr': lr,
             'weight_decay': weight_decay,

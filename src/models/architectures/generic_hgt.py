@@ -289,7 +289,7 @@ class GenericEdgeAttrHeteroConv(nn.Module):
         )
 
 
-class GenericHGTEncoder(nn.Module):
+class GenericHGATEncoder(nn.Module):
     """Graph-agnostic heterogeneous encoder driven by GraphSchema."""
 
     def __init__(
@@ -414,7 +414,7 @@ class GenericLinkPredictor(nn.Module):
         relation_types: Optional[List[EdgeType]] = None,
     ):
         super().__init__()
-        self.encoder = GenericHGTEncoder(
+        self.encoder = GenericHGATEncoder(
             schema=schema,
             metadata=metadata,
             hidden_dim=hidden_dim,
@@ -470,7 +470,7 @@ __all__ = [
     'GraphSchema',
     'infer_schema_from_data',
     'GenericEdgeAttrHeteroConv',
-    'GenericHGTEncoder',
+    'GenericHGATEncoder',
     'BilinearLinkHead',
     'GenericLinkPredictor',
 ]

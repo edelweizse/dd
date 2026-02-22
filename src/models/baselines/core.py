@@ -16,8 +16,8 @@ from torch_geometric.nn import HeteroConv, RGCNConv, SAGEConv
 
 from src.data.splits import SplitArtifacts, negative_sample_cd_batch_local
 from src.models.architectures._shared import init_node_states
-from src.models.architectures.generic_hgt import GenericLinkPredictor, infer_schema_from_data
-from src.models.architectures.hgt import HGTPredictor, infer_hgt_hparams_from_state
+from src.models.architectures.generic_hgat import GenericLinkPredictor, infer_schema_from_data
+from src.models.architectures.hgat import HGATPredictor, infer_hgat_hparams_from_state
 from src.training.utils import eval_epoch, sampled_ranking_metrics
 
 
@@ -328,8 +328,8 @@ class HeteroSAGEBaseline(nn.Module):
         )
 
 
-class HGTNoEdgeAttrBaseline(nn.Module):
-    """HGT baseline with edge-attribute gates disabled in forward pass."""
+class HGATNoEdgeAttrBaseline(nn.Module):
+    """HGAT baseline with edge-attribute gates disabled in forward pass."""
 
     kind = "loader"
     trainable = True
@@ -345,7 +345,7 @@ class HGTNoEdgeAttrBaseline(nn.Module):
         dropout: float,
     ):
         super().__init__()
-        self.model = HGTPredictor(
+        self.model = HGATPredictor(
             num_nodes_dict=num_nodes_dict,
             metadata=metadata,
             node_input_dims=node_input_dims,
@@ -365,8 +365,8 @@ class HGTNoEdgeAttrBaseline(nn.Module):
         )
 
 
-class GenericHGTBaseline(nn.Module):
-    """Schema-driven GenericHGT baseline focused on CD relation."""
+class GenericHGATBaseline(nn.Module):
+    """Schema-driven GenericHGAT baseline focused on CD relation."""
 
     kind = "loader"
     trainable = True
@@ -407,9 +407,20 @@ BASELINE_NAMES: Tuple[str, ...] = (
     "lightgcn_cd",
     "rgcn_cd",
     "heterosage",
-    "hgt_no_edge_attr",
-    "generic_hgt",
+    "hgat_no_edge_attr",
+    "generic_hgat",
 )
+
+LEGACY_BASELINE_ALIASES: Dict[str, str] = {
+    # Accept legacy baseline names and normalize to canonical HGAT names.
+    "hgt_no_edge_attr": "hgat_no_edge_attr",
+    "generic_hgt": "generic_hgat",
+}
+
+
+def normalize_baseline_name(name: str) -> str:
+    key = name.strip().lower()
+    return LEGACY_BASELINE_ALIASES.get(key, key)
 
 
 def build_baseline(
@@ -423,7 +434,7 @@ def build_baseline(
     dropout: float,
     device: torch.device,
 ) -> nn.Module:
-    name = name.strip().lower()
+    name = normalize_baseline_name(name)
     num_nodes_dict = {nt: int(data_train[nt].num_nodes) for nt in data_train.node_types}
     node_input_dims = {
         nt: int(data_train[nt].x.size(1))
@@ -468,8 +479,8 @@ def build_baseline(
             num_layers=num_layers,
             dropout=dropout,
         )
-    if name == "hgt_no_edge_attr":
-        return HGTNoEdgeAttrBaseline(
+    if name == "hgat_no_edge_attr":
+        return HGATNoEdgeAttrBaseline(
             num_nodes_dict=num_nodes_dict,
             metadata=data_train.metadata(),
             node_input_dims=node_input_dims,
@@ -478,8 +489,8 @@ def build_baseline(
             num_heads=num_heads,
             dropout=dropout,
         )
-    if name == "generic_hgt":
-        return GenericHGTBaseline(
+    if name == "generic_hgat":
+        return GenericHGATBaseline(
             data_train=data_train,
             hidden_dim=hidden_dim,
             num_layers=num_layers,
@@ -677,10 +688,10 @@ def load_main_model_from_checkpoint(
     data_full: HeteroData,
     vocabs: Dict[str, pl.DataFrame],
     device: torch.device,
-) -> HGTPredictor:
-    """Load HGTPredictor from checkpoint with inferred architecture."""
+) -> HGATPredictor:
+    """Load HGATPredictor from checkpoint with inferred architecture."""
     ckpt = torch.load(checkpoint_path, map_location=device)
-    model_cfg = infer_hgt_hparams_from_state(ckpt["model_state"])
+    model_cfg = infer_hgat_hparams_from_state(ckpt["model_state"])
     num_nodes_dict = {nt: int(data_full[nt].num_nodes) for nt in data_full.node_types}
     node_input_dims = {
         nt: int(data_full[nt].x.size(1))
@@ -689,7 +700,7 @@ def load_main_model_from_checkpoint(
         and data_full[nt].x.dim() == 2
         and data_full[nt].x.is_floating_point()
     }
-    model = HGTPredictor(
+    model = HGATPredictor(
         num_nodes_dict=num_nodes_dict,
         metadata=data_train.metadata(),
         node_input_dims=model_cfg["node_input_dims"] or node_input_dims,
@@ -735,11 +746,11 @@ def compare_main_and_baselines(
     device: torch.device,
     config: ComparisonConfig,
 ) -> Dict[str, Dict[str, float]]:
-    """Evaluate main HGT and baselines on val/test using a shared split artifact."""
+    """Evaluate main HGAT and baselines on val/test using a shared split artifact."""
     results: Dict[str, Dict[str, float]] = {}
 
     t0 = time.time()
-    print("[main_hgt] Loading checkpoint...", flush=True)
+    print("[main_hgat] Loading checkpoint...", flush=True)
     main_model = load_main_model_from_checkpoint(
         checkpoint_path=checkpoint_path,
         data_train=arts.data_train,
@@ -747,7 +758,7 @@ def compare_main_and_baselines(
         vocabs=vocabs,
         device=device,
     )
-    print("[main_hgt] Evaluating validation split...", flush=True)
+    print("[main_hgat] Evaluating validation split...", flush=True)
     val_main = eval_epoch(
         main_model,
         arts.val_loader,
@@ -763,9 +774,9 @@ def compare_main_and_baselines(
         global_dis_degree=arts.dis_train_degree,
         progress_every=int(config.progress_every),
         max_batches=int(config.max_eval_batches),
-        progress_prefix="[main_hgt][val]",
+        progress_prefix="[main_hgat][val]",
     )
-    print("[main_hgt] Evaluating test split...", flush=True)
+    print("[main_hgat] Evaluating test split...", flush=True)
     test_main = eval_epoch(
         main_model,
         arts.test_loader,
@@ -781,18 +792,22 @@ def compare_main_and_baselines(
         global_dis_degree=arts.dis_train_degree,
         progress_every=int(config.progress_every),
         max_batches=int(config.max_eval_batches),
-        progress_prefix="[main_hgt][test]",
+        progress_prefix="[main_hgat][test]",
     )
-    results["main_hgt"] = {
+    results["main_hgat"] = {
         **{f"val_{k}": float(v) for k, v in val_main.items()},
         **{f"test_{k}": float(v) for k, v in test_main.items()},
         "train_seconds": 0.0,
         "eval_seconds": float(time.time() - t0),
     }
-    print(f"[main_hgt] Done in {results['main_hgt']['eval_seconds']:.1f}s", flush=True)
+    print(f"[main_hgat] Done in {results['main_hgat']['eval_seconds']:.1f}s", flush=True)
 
-    for name in baseline_names:
-        name = name.strip().lower()
+    seen_names: set[str] = set()
+    for raw_name in baseline_names:
+        name = normalize_baseline_name(raw_name)
+        if name in seen_names:
+            continue
+        seen_names.add(name)
         bt0 = time.time()
         print(f"[{name}] Building baseline...", flush=True)
         baseline = build_baseline(

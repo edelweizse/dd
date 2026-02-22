@@ -1,0 +1,101 @@
+Rank,Chemical,Chemical_ID,Disease,Disease_ID,Score,Known
+1,Trans Fatty Acids,3782,Insulin Resistance,364,0.99999857,Yes
+2,Phenylpropionates,0,Insulin Resistance,364,0.9999963,Yes
+3,schizandrin B,286,Chemical and Drug Induced Liver Injury,1860,0.9999838,Yes
+4,1-(2-hydroxyethyl)-1-nitrosourea,6933,"Carcinoma, Squamous Cell",850,0.99998224,No
+5,SK&F 81297,5084,Hyperkinesis,871,0.9999765,Yes
+6,Piperacillin,1038,Staphylococcal Infections,1845,0.9999757,Yes
+7,"4,4a,5,6,7,8,8a,9-octahydro-5-propyl-1H-pyrzolo(3,4-g)quinoline",1126,"Dyskinesia, Drug-Induced",952,0.9999727,Yes
+8,panamesine,447,Hyperkinesis,871,0.9999621,Yes
+9,Antineoplastic Agents,2292,Chemical and Drug Induced Liver Injury,1860,0.99995995,Yes
+10,Chlorophyll,5641,"Liver Cirrhosis, Experimental",639,0.99995625,No
+11,Ceftriaxone,88,"Anemia, Hemolytic",1173,0.9999554,Yes
+12,UH 232,7652,Hyperkinesis,871,0.9999527,Yes
+13,Arsenic Trioxide,3488,Glioblastoma,1784,0.99995005,Yes
+14,Isoxsuprine,605,Myocardial Ischemia,798,0.9999484,Yes
+15,liposomal doxorubicin,5679,Thrombocytopenia,1076,0.9999447,Yes
+16,tenoxicam,6065,Escherichia coli Infections,978,0.99994254,No
+17,Fenoprofen,831,"Nephritis, Interstitial",1395,0.99994195,Yes
+18,alpha-pyrrolidinovalerophenone,5995,Substance-Related Disorders,735,0.9999387,Yes
+19,Fibric Acids,3880,Hyperlipoproteinemias,447,0.9999311,Yes
+20,Hemicholinium 3,3269,Bradycardia,1149,0.99992967,Yes
+21,6-chloro-2-(1-piperazinyl)pyrazine,4752,Hyperkinesis,871,0.99991846,Yes
+22,Estramustine,7035,Heart Failure,536,0.99991786,Yes
+23,Thiamylal,5437,Seizures,124,0.9999167,Yes
+24,Antifungal Agents,3071,Adenocarcinoma,502,0.999912,Yes
+25,"7H-dibenzo(c,g)carbazole",7075,Stomach Neoplasms,1678,0.99991167,Yes
+26,Fentanyl,3447,Seizures,124,0.99990225,Yes
+27,Ritodrine,3551,"Arrhythmias, Cardiac",1586,0.99990106,Yes
+28,zopolrestat,110,Hyperglycemia,1859,0.9998994,Yes
+29,benoxaprofen,5919,Diarrhea,825,0.9998964,Yes
+30,Colchicine,628,Chemical and Drug Induced Liver Injury,1860,0.9998896,Yes
+31,Capecitabine,5269,Thrombocytopenia,1076,0.9998815,Yes
+32,Vinorelbine,1480,"Leukemia, Lymphoid",1298,0.9998745,No
+33,veralipride,4710,"Dyskinesia, Drug-Induced",952,0.9998733,Yes
+34,Tolmetin,4870,"Nephritis, Interstitial",1395,0.99986637,Yes
+35,"1,2,5,6-dibenzanthracene",5821,"Micronuclei, Chromosome-Defective",1492,0.9998658,Yes
+36,Cytarabine,6950,Leukopenia,618,0.99986196,Yes
+37,1-Naphthylisothiocyanate,1996,"Liver Cirrhosis, Experimental",639,0.99985504,Yes
+38,3-hydroxystilbene,1982,Weight Gain,1249,0.99984074,Yes
+39,Flumazenil,3209,Myoclonus,152,0.99984,Yes
+40,Etorphine,5939,Hypotension,196,0.9998354,Yes
+41,Oligosaccharides,1272,Glucose Intolerance,360,0.9998349,Yes
+42,beauvericin,7149,Cleft Palate,767,0.9998246,No
+43,2-(4-(2-carboxyethyl)phenethylamino)-5'-N-ethylcarboxamidoadenosine,1219,"Dyskinesia, Drug-Induced",952,0.99982244,Yes
+44,chebulagic acid,2979,"Diabetes Mellitus, Experimental",556,0.99982196,Yes
+45,Nitrazepam,489,"Epilepsy, Complex Partial",198,0.99982005,No
+46,Muscimol,3988,Bradycardia,1149,0.99981934,Yes
+47,Obidoxime Chloride,4846,Sialorrhea,1775,0.99981755,Yes
+48,Flame Retardants,4803,Fetal Growth Retardation,19,0.99981636,No
+49,Vindesine,5156,Ovarian Neoplasms,587,0.9998161,Yes
+50,Methoxamine,209,Ventricular Fibrillation,435,0.9998149,Yes
+51,2-ethylhexanoic acid,5215,Teratogenesis,371,0.99981254,Yes
+52,"Cholesterol, Dietary",2584,Pituitary Diseases,1814,0.9998124,No
+53,"5-(3-methoxy-5-(4-methoxystyryl)phenoxy)-2,2-dimethylpentanoic acid",4312,Dyslipidemias,232,0.9998097,No
+54,Fructose,3706,Hypercholesterolemia,692,0.99980944,Yes
+55,Vindesine,5156,Neutropenia,1150,0.9998086,Yes
+56,Oxaprozin,7886,Stevens-Johnson Syndrome,623,0.9998084,Yes
+57,Phentermine,5962,Hypertension,434,0.99980634,Yes
+58,Triamcinolone Acetonide,342,Ocular Hypertension,1029,0.9998004,Yes
+59,Diethylnitrosamine,1492,Hepatomegaly,1850,0.99979466,Yes
+60,Foscarnet,1447,Addison Disease,1077,0.9997942,No
+61,Vincristine,1876,Bone Marrow Diseases,61,0.99979347,Yes
+62,Phenprocoumon,4070,Cholestasis,1507,0.99979335,Yes
+63,Cefdinir,6398,Stevens-Johnson Syndrome,623,0.9997923,Yes
+64,Metoprolol,4055,Hypertension,434,0.99978966,Yes
+65,Diltiazem,240,Tachycardia,770,0.9997843,Yes
+66,Norepinephrine,58,Seizures,124,0.9997824,Yes
+67,Trichloroacetic Acid,7503,"Liver Neoplasms, Experimental",1348,0.9997795,Yes
+68,Procainamide,3176,Thrombocytopenia,1076,0.9997788,No
+69,salvianolic acid B,5655,Chemical and Drug Induced Liver Injury,1860,0.9997756,Yes
+70,Pinacidil,4643,Hypotension,196,0.9997696,Yes
+71,Biperiden,7065,Torticollis,318,0.9997671,Yes
+72,cesium chloride,2309,Atrioventricular Block,873,0.99976593,No
+73,adrenocorticotropin zinc,3959,Chemical and Drug Induced Liver Injury,1860,0.99976534,No
+74,Droperidol,2510,"Arrhythmias, Cardiac",1586,0.99976355,Yes
+75,"2-amino-1-methyl-6-phenylimidazo(4,5-b)pyridine",4298,Aberrant Crypt Foci,1425,0.99976295,Yes
+76,Josamycin,115,Urticaria,1058,0.99976224,Yes
+77,Quercetin,2063,Inflammation,1185,0.9997615,Yes
+78,Arsenic,481,Weight Loss,659,0.9997608,Yes
+79,Molindone,7513,Schizophrenia,1511,0.9997589,Yes
+80,1-aminobenzotriazole,4228,Chemical and Drug Induced Liver Injury,1860,0.9997588,Yes
+81,Flumazenil,3209,Psychomotor Agitation,277,0.9997582,Yes
+82,olmesartan,6041,Chemical and Drug Induced Liver Injury,1860,0.9997564,Yes
+83,Resveratrol,4430,Diabetic Cardiomyopathies,1435,0.9997547,Yes
+84,cyclobenzaprine,313,Hallucinations,1751,0.9997534,Yes
+85,Carmustine,6834,Thrombocytopenia,1076,0.9997522,Yes
+86,Mianserin,7430,Psychomotor Agitation,277,0.99975055,No
+87,N-(4-(2-(4-(3-cyano-5-trifluoromethylphenyl)piperazin-1-yl)ethyl)cyclohexyl)-3-pyridinesulfonic amide,4839,Hyperkinesis,871,0.9997434,Yes
+88,norbinaltorphimine,2217,Memory Disorders,1019,0.99974006,Yes
+89,Sotalol,704,"Arrhythmias, Cardiac",1586,0.9997378,Yes
+90,Tenofovir,7814,"Kidney Tubular Necrosis, Acute",1654,0.9997378,Yes
+91,Oxytocin,5370,Bradycardia,1149,0.9997377,Yes
+92,Resveratrol,4430,Hypertrophy,1609,0.9997317,Yes
+93,Memantine,260,Memory Disorders,1019,0.99972516,Yes
+94,BEP protocol,4849,"Neoplasms, Germ Cell and Embryonal",987,0.99972457,Yes
+95,nifekalant,4357,Ventricular Fibrillation,435,0.9997224,Yes
+96,Polycyclic Aromatic Hydrocarbons,1614,Eye Abnormalities,723,0.9997217,Yes
+97,"Contraceptives, Oral",7382,Carotid Artery Thrombosis,1608,0.9997191,Yes
+98,Sorbitol,5783,Neurologic Manifestations,948,0.9997178,No
+99,Praziquantel,5587,Kidney Diseases,1139,0.9997178,No
+100,Idarubicin,7536,Hodgkin Disease,1535,0.9997141,No

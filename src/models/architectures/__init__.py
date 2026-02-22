@@ -1,28 +1,35 @@
 """Model architecture namespace."""
 
-from .hgt import EdgeAttrHeteroConv, HGTPredictor, HGTMainModel, create_model_from_data
-from .generic_hgt import (
-    NodeInputSpec,
-    EdgeAttrSpec,
-    GraphSchema,
-    infer_schema_from_data,
-    GenericEdgeAttrHeteroConv,
-    GenericHGTEncoder,
+from .hgat import (
+    EdgeAttrHeteroConv,
+    HGATMainModel,
+    HGATPredictor,
+    create_model_from_data,
+    infer_hgat_hparams_from_state,
+)
+from .generic_hgat import (
     BilinearLinkHead,
+    EdgeAttrSpec,
+    GenericEdgeAttrHeteroConv,
+    GenericHGATEncoder,
     GenericLinkPredictor,
+    GraphSchema,
+    NodeInputSpec,
+    infer_schema_from_data,
 )
 
 __all__ = [
-    'EdgeAttrHeteroConv',
-    'HGTPredictor',
-    'HGTMainModel',
-    'create_model_from_data',
-    'NodeInputSpec',
-    'EdgeAttrSpec',
-    'GraphSchema',
-    'infer_schema_from_data',
-    'GenericEdgeAttrHeteroConv',
-    'GenericHGTEncoder',
-    'BilinearLinkHead',
-    'GenericLinkPredictor',
+    "EdgeAttrHeteroConv",
+    "HGATPredictor",
+    "HGATMainModel",
+    "infer_hgat_hparams_from_state",
+    "create_model_from_data",
+    "NodeInputSpec",
+    "EdgeAttrSpec",
+    "GraphSchema",
+    "infer_schema_from_data",
+    "GenericEdgeAttrHeteroConv",
+    "GenericHGATEncoder",
+    "BilinearLinkHead",
+    "GenericLinkPredictor",
 ]

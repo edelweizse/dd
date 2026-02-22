@@ -13,7 +13,7 @@ import polars as pl
 from torch_geometric.data import HeteroData
 from typing import Dict, List, Tuple, Any, Optional
 
-from ..architectures.hgt import HGTPredictor
+from ..architectures.hgat import HGATPredictor
 from ._shared import (
     bilinear_score,
     build_id_mappings,
@@ -39,7 +39,7 @@ class ChemDiseasePredictor:
     
     def __init__(
         self,
-        model: HGTPredictor,
+        model: HGATPredictor,
         data: HeteroData,
         disease_df: pl.DataFrame,   # DS_ID, DS_OMIM_MESH_ID, DS_NAME
         chemical_df: pl.DataFrame,  # CHEM_ID, CHEM_MESH_ID, CHEM_NAME
@@ -48,7 +48,7 @@ class ChemDiseasePredictor:
     ):
         """
         Args:
-            model: Trained HGTPredictor model.
+            model: Trained HGATPredictor model.
             data: Full HeteroData graph (not train split).
             disease_df: Disease metadata DataFrame.
             chemical_df: Chemical metadata DataFrame.

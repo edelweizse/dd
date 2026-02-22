@@ -1,18 +1,23 @@
-"""
-Model definitions.
-"""
+"""Model definitions."""
 
-from .architectures.hgt import EdgeAttrHeteroConv, HGTPredictor, HGTMainModel, create_model_from_data
+from .architectures.hgat import (
+    EdgeAttrHeteroConv,
+    HGATMainModel,
+    HGATPredictor,
+    create_model_from_data,
+    infer_hgat_hparams_from_state,
+)
+from .inference.cached_embeddings import CachedEmbeddingPredictor, EmbeddingCachePredictor
 from .inference.full_graph import ChemDiseasePredictor, FullGraphPredictor
-from .inference.cached_embeddings import EmbeddingCachePredictor, CachedEmbeddingPredictor
 
 __all__ = [
-    'EdgeAttrHeteroConv',
-    'HGTPredictor',
-    'HGTMainModel',
-    'create_model_from_data',
-    'ChemDiseasePredictor',
-    'FullGraphPredictor',
-    'EmbeddingCachePredictor',
-    'CachedEmbeddingPredictor',
+    "EdgeAttrHeteroConv",
+    "HGATPredictor",
+    "HGATMainModel",
+    "infer_hgat_hparams_from_state",
+    "create_model_from_data",
+    "ChemDiseasePredictor",
+    "FullGraphPredictor",
+    "EmbeddingCachePredictor",
+    "CachedEmbeddingPredictor",
 ]

@@ -1,0 +1,47 @@
+{
+  "auroc": 0.948864624389502,
+  "auprc": 0.4710992560214582,
+  "precision@0.3": 0.2893944724600289,
+  "recall@0.3": 0.8416325602546612,
+  "f1@0.3": 0.43069494138522846,
+  "precision@0.5": 0.3236887115165336,
+  "recall@0.5": 0.774556616643929,
+  "f1@0.5": 0.45657418576598313,
+  "precision@0.7": 0.3669064748201439,
+  "recall@0.7": 0.6899727148703957,
+  "f1@0.7": 0.4790622409914354,
+  "mrr": 0.7082866494957218,
+  "mean_rank": 1.965325147794452,
+  "median_rank": 1.0,
+  "hits@5": 0.970100045475216,
+  "hits@10": 0.9992041837198726,
+  "hits@20": 1.0,
+  "hits@50": 1.0,
+  "evaluation_protocol": {
+    "version": 1,
+    "config_path": "configs/examples/eval_protocol.yaml",
+    "strict_mode": false,
+    "allow_noncomparable": true,
+    "comparable": true,
+    "violations": [],
+    "warnings": [],
+    "checks": {
+      "required_num_neg_eval": 20,
+      "observed_num_neg_eval": 20,
+      "required_eval_hard_negative_ratio": 0.0,
+      "observed_eval_hard_negative_ratio": 0.0,
+      "require_split_artifact": true,
+      "observed_split_artifact_path": "./splits/cd_split_seed42.pt",
+      "allowed_split_strategy": [
+        "stratified"
+      ],
+      "required_split_metadata_keys": [
+        "seed",
+        "val_ratio",
+        "test_ratio",
+        "split_strategy",
+        "stratify_bins"
+      ]
+    }
+  }
+}

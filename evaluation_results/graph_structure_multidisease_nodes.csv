@@ -1,0 +1,36 @@
+node_key,node_type,internal_id,external_id,label
+gene:7655,gene,7655,1956,EGFR
+gene:7437,gene,7437,6648,SOD2
+chemical:1430,chemical,1430,D001564,Benzo(a)pyrene
+chemical:2662,chemical,2662,D004958,Estradiol
+gene:6503,gene,6503,7124,TNF
+chemical:7129,chemical,7129,D002104,Cadmium
+disease:1142,disease,1142,MESH:D001943,Breast Neoplasms
+chemical:7044,chemical,7044,D014028,Tobacco Smoke Pollution
+gene:219,gene,219,3162,HMOX1
+gene:2743,gene,2743,3553,IL1B
+gene:2126,gene,2126,2335,FN1
+gene:7885,gene,7885,5743,PTGS2
+disease:1766,disease,1766,MESH:D010300,Parkinson Disease
+chemical:733,chemical,733,D000082,Acetaminophen
+chemical:1535,chemical,1535,D001280,Atrazine
+disease:426,disease,426,MESH:D006973,Hypertension
+gene:4882,gene,4882,5468,PPARG
+gene:1205,gene,1205,9370,ADIPOQ
+gene:3987,gene,3987,847,CAT
+disease:801,disease,801,MESH:D003920,Diabetes Mellitus
+gene:6726,gene,6726,196,AHR
+chemical:7849,chemical,7849,D013749,Tetrachlorodibenzodioxin
+chemical:2786,chemical,2786,D000393,Air Pollutants
+gene:6977,gene,6977,2944,GSTM1
+gene:5686,gene,5686,3569,IL6
+chemical:4455,chemical,4455,C006780,bisphenol A
+gene:2377,gene,2377,1543,CYP1A1
+gene:4121,gene,4121,8856,NR1I2
+chemical:4095,chemical,4095,C017947,sodium arsenite
+chemical:3573,chemical,3573,D014635,Valproic Acid
+gene:3420,gene,3420,1728,NQO1
+chemical:4646,chemical,4646,D012402,Rotenone
+gene:3884,gene,3884,4780,NFE2L2
+chemical:2496,chemical,2496,D002251,Carbon Tetrachloride
+chemical:7158,chemical,7158,D052638,Particulate Matter

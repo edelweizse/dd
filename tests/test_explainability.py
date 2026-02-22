@@ -5,7 +5,7 @@ Tests cover:
 1. Metapath enumeration on a synthetic graph
 2. Path scoring with mock embeddings and attention weights
 3. explain_pair() high-level API
-4. Attention weight extraction from HGTPredictor.encode()
+4. Attention weight extraction from HGATPredictor.encode()
 5. build_node_names() helper
 """
 
@@ -509,14 +509,14 @@ class TestBuildNodeNames:
 
 
 # ---------------------------------------------------------------------------
-# Tests: HGTPredictor attention extraction
+# Tests: HGATPredictor attention extraction
 # ---------------------------------------------------------------------------
 
 class TestAttentionExtraction:
     @pytest.fixture
     def small_model_and_data(self):
-        """Create a minimal HGTPredictor and HeteroData for attention test."""
-        from src.models.hgt import HGTPredictor
+        """Create a minimal HGATPredictor and HeteroData for attention test."""
+        from src.models.hgat import HGATPredictor
         import polars as pl
 
         data = HeteroData()
@@ -546,7 +546,7 @@ class TestAttentionExtraction:
         }
         metadata = data.metadata()
 
-        model = HGTPredictor(
+        model = HGATPredictor(
             num_nodes_dict=num_nodes_dict,
             metadata=metadata,
             hidden_dim=16,

@@ -16,7 +16,7 @@ import torch
 from src.cli_config import parse_args_with_config
 from src.data.processing import load_processed_data
 from src.data.graph import build_graph_from_processed
-from src.models.architectures.hgt import HGTPredictor, infer_hgt_hparams_from_state
+from src.models.architectures.hgat import HGATPredictor, infer_hgat_hparams_from_state
 from src.models.inference.full_graph import FullGraphPredictor
 from src.models.inference.cached_embeddings import CachedEmbeddingPredictor
 from src.explainability.explain import build_node_names
@@ -168,10 +168,10 @@ def main():
         }
 
         ckpt = torch.load(args.checkpoint, map_location=device)
-        model_cfg = infer_hgt_hparams_from_state(ckpt['model_state'])
+        model_cfg = infer_hgat_hparams_from_state(ckpt['model_state'])
         ckpt_has_extended = _checkpoint_has_extended_types(ckpt['model_state'])
 
-        model = HGTPredictor(
+        model = HGATPredictor(
             num_nodes_dict=num_nodes_dict,
             metadata=data.metadata(),
             node_input_dims=model_cfg['node_input_dims'] or node_input_dims,

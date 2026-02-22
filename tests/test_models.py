@@ -4,17 +4,17 @@ import pytest
 import torch
 from torch_geometric.data import HeteroData
 
-from src.models.architectures.generic_hgt import (
+from src.models.architectures.generic_hgat import (
     EdgeAttrSpec,
     GenericLinkPredictor,
     GraphSchema,
     NodeInputSpec,
     infer_schema_from_data,
 )
-from src.models.architectures.hgt import (
-    HGTPredictor,
+from src.models.architectures.hgat import (
+    HGATPredictor,
     create_model_from_data,
-    infer_hgt_hparams_from_state,
+    infer_hgat_hparams_from_state,
 )
 
 
@@ -51,9 +51,9 @@ def _make_arch_data() -> HeteroData:
     return data
 
 
-def test_hgt_predictor_encode_and_forward_shapes():
+def test_hgat_predictor_encode_and_forward_shapes():
     data = _make_arch_data()
-    model = HGTPredictor(
+    model = HGATPredictor(
         num_nodes_dict={ntype: data[ntype].num_nodes for ntype in data.node_types},
         metadata=data.metadata(),
         node_input_dims={ntype: int(data[ntype].x.size(1)) for ntype in data.node_types},
@@ -87,14 +87,14 @@ def test_hgt_predictor_encode_and_forward_shapes():
     assert neg_logits.shape == (2,)
 
 
-def test_hgt_reverse_edge_ablation_runs_and_reduces_parameter_count():
+def test_hgat_reverse_edge_ablation_runs_and_reduces_parameter_count():
     full_data = _make_arch_data()
     reduced_data = copy.deepcopy(full_data)
     del reduced_data['disease', 'rev_associated_with', 'chemical']
     del reduced_data['gene', 'rev_affects', 'chemical']
     del reduced_data['gene', 'rev_targets', 'disease']
 
-    model_full = HGTPredictor(
+    model_full = HGATPredictor(
         num_nodes_dict={ntype: full_data[ntype].num_nodes for ntype in full_data.node_types},
         metadata=full_data.metadata(),
         node_input_dims={ntype: int(full_data[ntype].x.size(1)) for ntype in full_data.node_types},
@@ -105,7 +105,7 @@ def test_hgt_reverse_edge_ablation_runs_and_reduces_parameter_count():
         num_action_types=4,
         num_action_subjects=4,
     )
-    model_reduced = HGTPredictor(
+    model_reduced = HGATPredictor(
         num_nodes_dict={ntype: reduced_data[ntype].num_nodes for ntype in reduced_data.node_types},
         metadata=reduced_data.metadata(),
         node_input_dims={ntype: int(reduced_data[ntype].x.size(1)) for ntype in reduced_data.node_types},
@@ -143,14 +143,14 @@ def test_create_model_from_data_infers_dense_node_inputs():
         num_action_types=4,
         num_action_subjects=4,
     )
-    assert isinstance(model, HGTPredictor)
+    assert isinstance(model, HGATPredictor)
     assert set(model.node_proj.keys()) == set(data.node_types)
     assert len(model.node_emb) == 0
 
 
-def test_infer_hgt_hparams_from_state_matches_constructed_model():
+def test_infer_hgat_hparams_from_state_matches_constructed_model():
     data = _make_arch_data()
-    model = HGTPredictor(
+    model = HGATPredictor(
         num_nodes_dict={ntype: data[ntype].num_nodes for ntype in data.node_types},
         metadata=data.metadata(),
         node_input_dims={ntype: int(data[ntype].x.size(1)) for ntype in data.node_types},
@@ -162,7 +162,7 @@ def test_infer_hgt_hparams_from_state_matches_constructed_model():
         num_action_subjects=4,
         num_pheno_action_types=3,
     )
-    cfg = infer_hgt_hparams_from_state(model.state_dict())
+    cfg = infer_hgat_hparams_from_state(model.state_dict())
     assert cfg['hidden_dim'] == 16
     assert cfg['num_layers'] == 2
     assert cfg['num_heads'] == 4

@@ -1,0 +1,51 @@
+Chemical,Disease,Score,Error
+1-(2-hydroxyethyl)-1-nitrosourea,"Carcinoma, Squamous Cell",0.99998224,False Positive
+Chlorophyll,"Liver Cirrhosis, Experimental",0.99995625,False Positive
+tenoxicam,Escherichia coli Infections,0.99994254,False Positive
+Vinorelbine,"Leukemia, Lymphoid",0.9998745,False Positive
+beauvericin,Cleft Palate,0.9998246,False Positive
+Nitrazepam,"Epilepsy, Complex Partial",0.99982005,False Positive
+Flame Retardants,Fetal Growth Retardation,0.99981636,False Positive
+"Cholesterol, Dietary",Pituitary Diseases,0.9998124,False Positive
+"Cholesterol, Dietary",Pituitary Diseases,0.9998124,False Positive
+"5-(3-methoxy-5-(4-methoxystyryl)phenoxy)-2,2-dimethylpentanoic acid",Dyslipidemias,0.9998097,False Positive
+Foscarnet,Addison Disease,0.9997942,False Positive
+Procainamide,Thrombocytopenia,0.9997788,False Positive
+cesium chloride,Atrioventricular Block,0.99976593,False Positive
+adrenocorticotropin zinc,Chemical and Drug Induced Liver Injury,0.99976534,False Positive
+Mianserin,Psychomotor Agitation,0.99975055,False Positive
+Praziquantel,Kidney Diseases,0.9997178,False Positive
+Sorbitol,Neurologic Manifestations,0.9997178,False Positive
+Idarubicin,Hodgkin Disease,0.9997141,False Positive
+Phenytoin,"Cardiac Output, High",0.9996997,False Positive
+Dextropropoxyphene,Seizures,0.9996946,False Positive
+lorcaserin,"Genital Diseases, Male",0.9996867,False Positive
+Erythrosine,Weight Loss,0.99965024,False Positive
+Atenolol,"Cardiomyopathy, Hypertrophic",0.99964356,False Positive
+Hydromorphone,"Dyskinesia, Drug-Induced",0.9996376,False Positive
+Vindesine,Optic Nerve Diseases,0.9995809,False Positive
+Anthracyclines,Alopecia,0.99957603,False Positive
+capmatinib,Osteoarthritis,0.9995584,False Positive
+Sulfisoxazole,Torticollis,0.9995314,False Positive
+N-vinyl-2-pyrrolidinone,"Porphyrias, Hepatic",0.99951994,False Positive
+bisdemethoxycurcumin,Mite Infestations,0.99951565,False Positive
+Epinephrine,Thrombotic Microangiopathies,0.99951494,False Positive
+tris(chloroethyl)phosphate,Testicular Diseases,0.9994816,False Positive
+Catecholamines,Bradycardia,0.99947506,False Positive
+linalool,Dyslipidemias,0.99945325,False Positive
+Paclitaxel,Gastrointestinal Neoplasms,0.999428,False Positive
+Bortezomib,Central Nervous System Neoplasms,0.99942774,False Positive
+Perindopril,Weight Gain,0.9993981,False Positive
+Pindolol,Erectile Dysfunction,0.9993855,False Positive
+"1,2-bis(2-aminophenoxy)ethane N,N,N',N'-tetraacetic acid acetoxymethyl ester",Chemical and Drug Induced Liver Injury,0.99938464,False Positive
+Stavudine,"Anemia, Hemolytic, Autoimmune",0.999355,False Positive
+MOPP protocol,Endometrial Neoplasms,0.9993069,False Positive
+Procainamide,"Nephritis, Interstitial",0.9992888,False Positive
+alvocidib,Vaginal Neoplasms,0.9992749,False Positive
+Curcumin,"Diabetes Mellitus, Experimental",0.9992478,False Positive
+Muscimol,Alcoholism,0.9991967,False Positive
+decabromobiphenyl ether,Motor Disorders,0.99916804,False Positive
+U 69593,"Dyskinesia, Drug-Induced",0.9991667,False Positive
+Vitamin K 2,Chemical and Drug Induced Liver Injury,0.9991654,False Positive
+Foscarnet,"Anemia, Aplastic",0.99915946,False Positive
+Procyclidine,Obsessive-Compulsive Disorder,0.99914646,False Positive

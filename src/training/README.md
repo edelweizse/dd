@@ -5,7 +5,7 @@ Training and evaluation utilities shared across scripts.
 ## Main Files
 
 - `trainer.py`
-  - main HGT training loop with MLflow logging
+  - main HGAT training loop with MLflow logging
   - scheduler + early stopping
   - checkpoint save/load helpers
   - Optuna-oriented tuning loop (`train_for_tuning`)

@@ -33,6 +33,7 @@ import polars as pl
 
 from src.cli_config import parse_args_with_config
 from src.data.splits import load_split_artifact
+from src.models.baselines import normalize_baseline_name
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,7 +106,7 @@ def main() -> None:
     parser.add_argument(
         "--baseline-models",
         type=str,
-        default="degree,mf,generic_hgt",
+        default="degree,mf,generic_hgat",
         help="Comma-separated baselines for comparison stage",
     )
     parser.add_argument("--baseline-epochs", type=int, default=1, help="Train epochs for baseline comparison")
@@ -351,8 +352,9 @@ def main() -> None:
     if not compare_json_path.exists() or not compare_csv_path.exists():
         raise RuntimeError("Baseline comparison outputs are missing.")
     compare_results = json.loads(compare_json_path.read_text())
-    requested_baselines = [x.strip().lower() for x in args.baseline_models.split(",") if x.strip()]
-    expected_models = {"main_hgt", *requested_baselines}
+    requested_baselines = [normalize_baseline_name(x) for x in args.baseline_models.split(",") if x.strip()]
+    requested_baselines = list(dict.fromkeys(requested_baselines))
+    expected_models = {"main_hgat", *requested_baselines}
     missing = sorted(expected_models.difference(compare_results.keys()))
     if missing:
         raise RuntimeError(f"Baseline comparison results missing models: {missing}")

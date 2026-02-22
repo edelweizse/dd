@@ -1,0 +1,11 @@
+node_type,internal_id,external_id,label
+disease,801,MESH:D003920,Diabetes Mellitus
+chemical,4455,C006780,bisphenol A
+chemical,7158,D052638,Particulate Matter
+chemical,7129,D002104,Cadmium
+chemical,2786,D000393,Air Pollutants
+gene,1205,9370,ADIPOQ
+gene,4882,5468,PPARG
+gene,3987,847,CAT
+gene,7885,5743,PTGS2
+gene,2126,2335,FN1

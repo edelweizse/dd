@@ -6,8 +6,8 @@ This package is organized by responsibility so architecture code and inference w
 
 - `src/models/architectures/`
   - production trainable model definitions
-  - main model: HGT (`HGTPredictor`)
-  - graph-agnostic schema-driven variant: `generic_hgt.py` (`GenericLinkPredictor`)
+  - main model: HGAT (`HGATPredictor`)
+  - graph-agnostic schema-driven variant: `generic_hgat.py` (`GenericLinkPredictor`)
 
 - `src/models/inference/`
   - user-facing predictor wrappers around trained model outputs
@@ -16,11 +16,11 @@ This package is organized by responsibility so architecture code and inference w
 
 - `src/models/baselines/`
   - baseline models and comparison helpers
-  - includes heuristic and trainable baselines (degree, MF, MLP, LightGCN CD, RGCN CD, HeteroSAGE, HGT-no-edge-attr, GenericHGT baseline)
+  - includes heuristic and trainable baselines (degree, MF, MLP, LightGCN CD, RGCN CD, HeteroSAGE, HGAT-no-edge-attr, GenericHGAT baseline)
 
 ## Current Source-of-Truth Files
 
-- Core HGT implementation: `src/models/architectures/hgt.py`
+- Core HGAT implementation: `src/models/architectures/hgat.py`
 - Full-graph predictor implementation: `src/models/inference/full_graph.py`
 - Cache predictor implementation: `src/models/inference/cached_embeddings.py`
 
@@ -29,9 +29,9 @@ Compatibility shims in `src/models/hgt.py`, `src/models/predictor.py`, and `src/
 ## Recommended Imports
 
 - Architecture (training/eval):
-  - `from src.models.architectures.hgt import HGTPredictor`
+  - `from src.models.architectures.hgat import HGATPredictor`
 - Generic architecture:
-  - `from src.models.architectures.generic_hgt import GraphSchema, GenericLinkPredictor`
+  - `from src.models.architectures.generic_hgat import GraphSchema, GenericLinkPredictor`
 - Full-graph inference:
   - `from src.models.inference.full_graph import FullGraphPredictor`
 - Memory-efficient inference:
@@ -39,9 +39,9 @@ Compatibility shims in `src/models/hgt.py`, `src/models/predictor.py`, and `src/
 
 ## Generic Entry Point
 
-`src/models/architectures/generic_hgt.py` provides:
+`src/models/architectures/generic_hgat.py` provides:
 - `GraphSchema` (node/edge contract)
-- `GenericHGTEncoder` (schema-driven heterogeneous encoder)
+- `GenericHGATEncoder` (schema-driven heterogeneous encoder)
 - `BilinearLinkHead` (relation-aware decoder)
 - `GenericLinkPredictor` (encoder + head)
 

@@ -20,8 +20,8 @@ Baseline models and unified comparison utilities.
 - `lightgcn_cd`
 - `rgcn_cd`
 - `heterosage`
-- `hgt_no_edge_attr`
-- `generic_hgt`
+- `hgat_no_edge_attr`
+- `generic_hgat`
 
 ## Main APIs
 
@@ -34,7 +34,7 @@ Baseline models and unified comparison utilities.
 
 - `scripts/compare_baselines.py`
 - `scripts/smoke_e2e.py`
-- `scripts/smoke_generic_hgt.py`
+- `scripts/smoke_generic_hgat.py`
 
 ## Evaluation Notes
 

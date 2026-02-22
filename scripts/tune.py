@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Hyperparameter tuning with Optuna for HGT chemical-disease link prediction.
+Hyperparameter tuning with Optuna for HGAT chemical-disease link prediction.
 
 This script performs Bayesian hyperparameter optimization using Optuna with:
 - TPE (Tree-structured Parzen Estimator) sampler for smart parameter search
@@ -37,7 +37,7 @@ from typing import Dict, Any, List
 from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders
-from src.models.architectures.hgt import HGTPredictor
+from src.models.architectures.hgat import HGATPredictor
 from src.training.trainer import train_for_tuning
 
 CHECKPOINT_ROOT = Path('./checkpoints')
@@ -223,7 +223,7 @@ def create_objective(
                 and data[ntype].x.is_floating_point()
             }
             
-            model = HGTPredictor(
+            model = HGATPredictor(
                 num_nodes_dict=num_nodes_dict,
                 metadata=arts.data_train.metadata(),
                 node_input_dims=node_input_dims,
@@ -401,7 +401,7 @@ def generate_train_command(params: Dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Hyperparameter tuning for HGT chemical-disease link prediction'
+        description='Hyperparameter tuning for HGAT chemical-disease link prediction'
     )
     
     # Optimization settings
@@ -411,11 +411,11 @@ def main():
                         help='Maximum number of trials (optional, use with or instead of timeout)')
     
     # Study settings
-    parser.add_argument('--study-name', type=str, default='hgt_cd_tuning',
+    parser.add_argument('--study-name', type=str, default='hgat_cd_tuning',
                         help='Optuna study name (for resuming)')
-    parser.add_argument('--storage', type=str, default='sqlite:///optuna_hgt.db',
+    parser.add_argument('--storage', type=str, default='sqlite:///optuna_hgat.db',
                         help='Optuna storage URL')
-    parser.add_argument('--experiment-name', type=str, default='HGT_tuning',
+    parser.add_argument('--experiment-name', type=str, default='HGAT_tuning',
                         help='MLflow experiment name')
     
     # Data settings
@@ -445,7 +445,7 @@ def main():
     space_name = "QUICK" if args.quick else "FULL"
     
     print(f"\n{'='*60}")
-    print("HGT Hyperparameter Tuning with Optuna")
+    print("HGAT Hyperparameter Tuning with Optuna")
     print(f"{'='*60}")
     print(f"Search space: {space_name}")
     print(f"Timeout: {args.timeout}s ({args.timeout/3600:.1f} hours)")

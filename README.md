@@ -1,4 +1,4 @@
-# Chemical-Disease Link Prediction (HGT)
+# Chemical-Disease Link Prediction (HGAT / HeteroGAT)
 
 This repository implements an end-to-end pipeline for chemical-disease link prediction on a heterogeneous biomedical graph.
 
@@ -6,7 +6,7 @@ It includes:
 - Data processing from raw CTD/PPI tables to parquet artifacts
 - Heterogeneous graph construction with optional extended node/edge types
 - Reproducible split artifact creation and strict split reuse across train/eval/test
-- Main model training (`HGTPredictor`) and schema-driven variant (`GenericLinkPredictor`)
+- Main model training (`HGATPredictor`) and schema-driven variant (`GenericLinkPredictor`)
 - Baseline training/evaluation and checkpoint-vs-baseline comparison
 - Full-graph and cached-embedding inference
 - Path-based explainability (`path_attention`)
@@ -19,7 +19,7 @@ flowchart LR
     raw["Raw CTD + PPI<br/>`data/raw`"]
     process["`scripts.process_data`<br/>Parquet Artifacts"]
     split["`scripts.create_split`<br/>Reusable Split Artifact"]
-    train["`scripts.train`<br/>HGT / Generic HGT"]
+    train["`scripts.train`<br/>HGAT / Generic HGAT"]
     eval["`scripts.evaluate`<br/>Val / Test Metrics"]
     compare["`scripts.compare_baselines`<br/>Baseline Comparison"]
     ckpt["Checkpoint<br/>`checkpoints/&lt;run_id&gt;/best.pt`"]
@@ -72,7 +72,7 @@ python -m scripts.create_split \
   --split-strategy stratified
 ```
 
-3. Train the main HGT model using that exact split:
+3. Train the main HGAT model using that exact split:
 ```bash
 python -m scripts.train \
   --processed-dir ./data/processed \
@@ -171,7 +171,7 @@ python -m scripts.compare_baselines \
   --checkpoint ./checkpoints/<run_id>/best.pt \
   --processed-dir ./data/processed \
   --split-artifact-path ./splits/cd_split_seed42.pt \
-  --baselines degree,mf,generic_hgt \
+  --baselines degree,mf,generic_hgat \
   --output-dir ./baseline_comparison
 ```
 
@@ -183,21 +183,21 @@ Outputs:
 
 ## Smoke Tests
 
-Main HGT end-to-end smoke:
+Main HGAT end-to-end smoke:
 ```bash
 python -m scripts.smoke_e2e \
   --epochs 1 \
   --batch-size 1024 \
-  --baseline-models degree,mf,generic_hgt
+  --baseline-models degree,mf,generic_hgat
 ```
 
-GenericHGT end-to-end smoke:
+GenericHGAT end-to-end smoke:
 ```bash
-python -m scripts.smoke_generic_hgt \
+python -m scripts.smoke_generic_hgat \
   --processed-dir ./data/processed \
   --skip-process \
   --epochs 1 \
-  --baseline-models degree,mf,generic_hgt
+  --baseline-models degree,mf,generic_hgat
 ```
 
 ## Streamlit App

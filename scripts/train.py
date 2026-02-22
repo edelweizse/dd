@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Train the HGT model for chemical-disease link prediction.
+Train the HGAT model for chemical-disease link prediction.
 
 Usage:
     python scripts/train.py --epochs 50 --batch-size 4096 --hidden-dim 128
@@ -17,7 +17,7 @@ from datetime import datetime
 from src.cli_config import parse_args_with_config
 from src.data.graph import build_graph_from_processed, print_graph_summary
 from src.data.splits import prepare_splits_and_loaders
-from src.models.architectures.hgt import HGTPredictor
+from src.models.architectures.hgat import HGATPredictor
 from src.training.trainer import train
 
 
@@ -81,7 +81,7 @@ def resolve_checkpoint_dir(ckpt_dir_arg: str, run_id: str) -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train HGT model for CD link prediction')
+    parser = argparse.ArgumentParser(description='Train HGAT model for CD link prediction')
     
     # Data arguments
     parser.add_argument('--processed-dir', type=str, default='./data/processed',
@@ -161,7 +161,7 @@ def main():
                         help='Checkpoint subdirectory under ./checkpoints (run ID appended)')
     parser.add_argument('--run-name', type=str, default=None,
                         help='MLflow run name (auto-generated if not provided)')
-    parser.add_argument('--experiment-name', type=str, default='HGT_linkpred',
+    parser.add_argument('--experiment-name', type=str, default='HGAT_linkpred',
                         help='MLflow experiment name')
     parser.add_argument('--no-amp', action='store_true',
                         help='Disable automatic mixed precision')
@@ -170,7 +170,7 @@ def main():
     
     # Generate unique run ID for this experiment
     run_id = generate_run_id()
-    run_name = args.run_name if args.run_name else f'hgt_cd_{run_id}'
+    run_name = args.run_name if args.run_name else f'hgat_cd_{run_id}'
     ckpt_dir = resolve_checkpoint_dir(args.ckpt_dir, run_id)
     
     print(f'Run ID: {run_id}')
@@ -255,7 +255,7 @@ def main():
         and data[ntype].x.is_floating_point()
     }
     
-    model = HGTPredictor(
+    model = HGATPredictor(
         num_nodes_dict = num_nodes_dict,
         metadata = arts.data_train.metadata(),
         node_input_dims = node_input_dims,

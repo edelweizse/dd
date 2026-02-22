@@ -14,7 +14,7 @@ from torch_geometric.data import HeteroData
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from ..architectures.hgt import HGTPredictor
+from ..architectures.hgat import HGATPredictor
 from ._shared import (
     bilinear_score,
     build_id_mappings,
@@ -94,7 +94,7 @@ class EmbeddingCachePredictor:
     
     @staticmethod
     def compute_and_save_embeddings(
-        model: HGTPredictor,
+        model: HGATPredictor,
         data: HeteroData,
         output_dir: str,
         device: Optional[torch.device] = None,
@@ -108,7 +108,7 @@ class EmbeddingCachePredictor:
         Saved files are: `chemical_embeddings.npy`, `disease_embeddings.npy`, `W_cd.pt`.
         
         Args:
-            model: Trained HGTPredictor model
+            model: Trained HGATPredictor model
             data: Full HeteroData graph
             output_dir: Directory to save embeddings
             device: Torch device

@@ -130,7 +130,7 @@ def eval_epoch(
     Evaluate model on a data loader.
     
     Args:
-        model: HGTPredictor model.
+        model: HGATPredictor model.
         loader: DataLoader (val or test).
         known_pos: PackedPairFilter for negative sampling.
         device: Torch device.

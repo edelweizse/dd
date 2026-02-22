@@ -2,7 +2,7 @@
 mlruns/
 checkpoints/
 mlflow.db
-optuna_hgt.db
+optuna_hgat.db
 /**/**/__pycache__/
 data/processed/*
 !data/processed/.gitkeep

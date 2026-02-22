@@ -14,7 +14,7 @@ This folder contains configs for active CLI entrypoints.
 - `tune.yaml` -> `python -m scripts.tune --config ...`
 - `compare_baselines.yaml` -> `python -m scripts.compare_baselines --config ...`
 - `smoke_e2e.yaml` -> `python -m scripts.smoke_e2e --config ...`
-- `smoke_generic_hgt.yaml` -> `python -m scripts.smoke_generic_hgt --config ...`
+- `smoke_generic_hgat.yaml` -> `python -m scripts.smoke_generic_hgat --config ...`
 
 ## Usage Notes
 

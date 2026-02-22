@@ -6,7 +6,7 @@ paths:
 evaluation:
   split_artifact_path: ./splits/cd_split_seed42.pt
   split: test
-  num_neg_eval: 5
+  num_neg_eval: 20
   batch_size: 1024
   no_tsne: false
   seed: 42

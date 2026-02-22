@@ -4,7 +4,7 @@ import torch
 from torch_geometric.data import HeteroData
 
 from src.data.splits import prepare_splits_and_loaders
-from src.models.architectures.hgt import HGTPredictor
+from src.models.architectures.hgat import HGATPredictor
 from src.models.baselines import (
     BASELINE_NAMES,
     ComparisonConfig,
@@ -111,7 +111,7 @@ def test_compare_main_and_baselines_smoke(tiny_artifacts, tmp_path):
         "action_subject": pl.DataFrame({"ACTION_SUBJECT": ["x", "y", "z"]}),
     }
 
-    model = HGTPredictor(
+    model = HGATPredictor(
         num_nodes_dict={nt: int(data[nt].num_nodes) for nt in data.node_types},
         metadata=arts.data_train.metadata(),
         node_input_dims={},
@@ -143,12 +143,12 @@ def test_compare_main_and_baselines_smoke(tiny_artifacts, tmp_path):
         data_full=data,
         vocabs=vocabs,
         arts=arts,
-        baseline_names=["degree", "mf", "generic_hgt"],
+        baseline_names=["degree", "mf", "generic_hgat"],
         device=torch.device("cpu"),
         config=cfg,
     )
-    assert "main_hgt" in results
+    assert "main_hgat" in results
     assert "degree" in results
     assert "mf" in results
-    assert "generic_hgt" in results
-    assert "val_auprc" in results["main_hgt"]
+    assert "generic_hgat" in results
+    assert "val_auprc" in results["main_hgat"]
