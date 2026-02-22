@@ -16,18 +16,18 @@ It includes:
 
 ```mermaid
 flowchart LR
-    raw["Raw CTD + PPI<br/>`data/raw`"]
-    process["`scripts.process_data`<br/>Parquet Artifacts"]
-    split["`scripts.create_split`<br/>Reusable Split Artifact"]
-    train["`scripts.train`<br/>HGAT / Generic HGAT"]
-    eval["`scripts.evaluate`<br/>Val / Test Metrics"]
-    compare["`scripts.compare_baselines`<br/>Baseline Comparison"]
-    ckpt["Checkpoint<br/>`checkpoints/&lt;run_id&gt;/best.pt`"]
-    explain["`scripts.explain`<br/>`path_attention`"]
-    cache["`scripts.cache_embeddings_chunked`<br/>`embeddings/`"]
-    predict["`scripts.predict`<br/>Full-Graph Inference"]
-    predict_cached["`scripts.predict_cached`<br/>Cached Inference"]
-    app["`streamlit run app.py`<br/>UI"]
+    raw["Raw CTD + PPI (data/raw)"]
+    process["scripts.process_data - Parquet Artifacts"]
+    split["scripts.create_split - Reusable Split Artifact"]
+    train["scripts.train - HGAT / Generic HGAT"]
+    eval["scripts.evaluate - Val / Test Metrics"]
+    compare["scripts.compare_baselines - Baseline Comparison"]
+    ckpt["Checkpoint (checkpoints/run_id/best.pt)"]
+    explain["scripts.explain - path_attention"]
+    cache["scripts.cache_embeddings_chunked (embeddings/)"]
+    predict["scripts.predict - Full-Graph Inference"]
+    predict_cached["scripts.predict_cached - Cached Inference"]
+    app["streamlit run app.py - UI"]
 
     raw --> process --> split --> train
     split --> eval
